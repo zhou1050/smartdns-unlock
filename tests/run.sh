@@ -2,11 +2,10 @@
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
-bash -n install.sh bin/smartunlock scripts/auto_unlock.sh tests/smoke_cli.sh tests/fake-bin/systemctl
-python3 -m py_compile scripts/build_rules.py scripts/check_upstreams.py scripts/platform_check.py
+bash -n install.sh
+python3 -m py_compile scripts/build_rules.py
 python3 tests/test_builder.py
-python3 tests/test_health.py
-python3 tests/test_platform_check.py
+go test ./...
 
 test_dir="$(mktemp -d)"
 trap 'rm -rf -- "$test_dir"' EXIT
@@ -16,5 +15,4 @@ find "$test_dir/generated" -name '*.txt' -type f -size 0c | grep -q . && {
   echo 'empty generated rule found' >&2
   exit 1
 }
-echo 'offline build OK'
-bash tests/smoke_cli.sh
+echo 'offline build + Go runtime tests OK'
