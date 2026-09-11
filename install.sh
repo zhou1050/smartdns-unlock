@@ -52,7 +52,7 @@ trap cleanup EXIT
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl tar gzip build-essential libssl-dev dnsutils >/dev/null
+apt-get install -y -qq ca-certificates curl tar gzip build-essential libssl-dev pkg-config dnsutils >/dev/null
 install -d -m 0755 "$CONFIG_DIR" "$STATE_DIR"
 
 case "$(uname -m)" in
@@ -68,23 +68,17 @@ backup_smartdns(){
     touch "$d/preexisting"
     p="$(command -v smartdns)"
     printf '%s\n' "$p" > "$d/binary.path"
-    cp -a "$p" "$d/smartdns.bin" 2>/dev/null || true
+    cp -a "$p" "$d/smartdns.bin" || true
+    if [[ -f /etc/smartdns/smartdns.conf ]]; then touch "$d/config.existed"; cp -a /etc/smartdns/smartdns.conf "$d/smartdns.conf"; fi
+    [[ -f /etc/default/smartdns ]] && cp -a /etc/default/smartdns "$d/default.smartdns" || true
+    [[ -f /etc/init.d/smartdns ]] && cp -a /etc/init.d/smartdns "$d/init.smartdns" || true
+    fragment="$(systemctl show -p FragmentPath --value smartdns.service 2>/dev/null || true)"
+    if [[ -n "$fragment" && -f "$fragment" ]]; then printf '%s\n' "$fragment" > "$d/service.path"; cp -a "$fragment" "$d/smartdns.service" || true; fi
+    systemctl is-enabled --quiet smartdns.service 2>/dev/null && touch "$d/service.enabled" || true
+    systemctl is-active --quiet smartdns.service 2>/dev/null && touch "$d/service.active" || true
   else
     touch "$d/installed-by-smartunlock"
   fi
-  if [[ -f /etc/smartdns/smartdns.conf ]]; then
-    cp -a /etc/smartdns/smartdns.conf "$d/smartdns.conf"
-    touch "$d/config.existed"
-  fi
-  [[ -f /etc/default/smartdns ]] && cp -a /etc/default/smartdns "$d/default.smartdns" || true
-  [[ -f /etc/init.d/smartdns ]] && cp -a /etc/init.d/smartdns "$d/init.smartdns" || true
-  fragment="$(systemctl show -p FragmentPath --value smartdns.service 2>/dev/null || true)"
-  if [[ -n "$fragment" && -f "$fragment" ]]; then
-    printf '%s\n' "$fragment" > "$d/service.path"
-    cp -a "$fragment" "$d/smartdns.service" || true
-  fi
-  systemctl is-enabled --quiet smartdns.service 2>/dev/null && touch "$d/service.enabled" || true
-  systemctl is-active --quiet smartdns.service 2>/dev/null && touch "$d/service.active" || true
 }
 
 record_smartdns_install(){
@@ -139,12 +133,8 @@ collect_config(){
     [[ "$TGBOT_CONFIG" == *'|'* ]] || die "TGBOT 应为 BOT_TOKEN|CHAT_ID"
     TG_BOT_TOKEN="${TGBOT_CONFIG%%|*}"; TG_CHAT_ID="${TGBOT_CONFIG#*|}"
   fi
-  if [[ -z "$PRIMARY" && -r /dev/tty ]]; then
-    printf '\n主解锁 DNS（可留空）：' >/dev/tty; IFS= read -r PRIMARY </dev/tty || true
-  fi
-  if [[ -n "$PRIMARY" && -z "$BACKUP" && -r /dev/tty ]]; then
-    printf '备用解锁 DNS（可留空）：' >/dev/tty; IFS= read -r BACKUP </dev/tty || true
-  fi
+  if [[ -z "$PRIMARY" && -r /dev/tty ]]; then printf '\n主解锁 DNS（可留空）：' >/dev/tty; IFS= read -r PRIMARY </dev/tty || true; fi
+  if [[ -n "$PRIMARY" && -z "$BACKUP" && -r /dev/tty ]]; then printf '备用解锁 DNS（可留空）：' >/dev/tty; IFS= read -r BACKUP </dev/tty || true; fi
   PRIMARY_PROTO="${PRIMARY_PROTO:-$(detect_proto "$PRIMARY")}"; BACKUP_PROTO="${BACKUP_PROTO:-$(detect_proto "$BACKUP")}";
   for v in "$PRIMARY" "$BACKUP" "$TG_BOT_TOKEN" "$TG_CHAT_ID"; do [[ "$v" != *$'\n'* && "$v" != *$'\r'* ]] || die '配置值不能包含换行'; done
   install -d -m 0755 "$CONFIG_DIR" "$STATE_DIR"
@@ -202,8 +192,8 @@ UNIT
   systemctl enable smartunlock.service >/dev/null
 }
 
-backup_smartdns
 install_binary
+backup_smartdns
 install_smartdns
 record_smartdns_install
 collect_config
@@ -244,4 +234,4 @@ info '执行首次综合解锁复检'
 info '安装完成'
 printf '\n长期保留的核心文件：\n  /usr/local/bin/smartunlock\n  /etc/smartdns-unlock/config.env\n  /var/lib/smartdns-unlock/state.json\n  /var/lib/smartdns-unlock/rules.json\n  /etc/systemd/system/smartunlock.service\n\n'
 printf '常用命令：smartunlock status | list | check | update | health-check\n'
-printf '卸载命令：smartunlock uninstall\n'
+printf '卸载命令：sudo smartunlock uninstall\n'
