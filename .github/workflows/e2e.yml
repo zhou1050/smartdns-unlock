@@ -89,14 +89,14 @@ jobs:
           docker exec smartunlock-e2e bash -lc '
             set -euxo pipefail
             sed -i "s|^UNLOCK_PRIMARY=.*|UNLOCK_PRIMARY=https://127.0.0.1:9/dns-query|" /etc/smartdns-unlock/config.env
-            systemctl kill -s HUP smartunlock.service
+            systemctl kill --kill-whom=main -s HUP smartunlock.service
             sleep 3
             smartunlock health-check | tee /tmp/health-primary-down.txt
             grep -q "主=false" /tmp/health-primary-down.txt
             grep -q "备用=true" /tmp/health-primary-down.txt
             grep -q "unlock_backup" /run/smartdns-unlock/platforms.conf
             sed -i "s|^UNLOCK_PRIMARY=.*|UNLOCK_PRIMARY=https://cloudflare-dns.com/dns-query|" /etc/smartdns-unlock/config.env
-            systemctl kill -s HUP smartunlock.service
+            systemctl kill --kill-whom=main -s HUP smartunlock.service
             sleep 3
             smartunlock health-check | grep -q "主=true"
           '
@@ -107,14 +107,14 @@ jobs:
             set -euxo pipefail
             smartunlock on netflix backup
             sed -i "s|^UNLOCK_BACKUP=.*|UNLOCK_BACKUP=https://127.0.0.1:9/dns-query|" /etc/smartdns-unlock/config.env
-            systemctl kill -s HUP smartunlock.service
+            systemctl kill --kill-whom=main -s HUP smartunlock.service
             sleep 3
             smartunlock health-check | tee /tmp/health-backup-down.txt
             grep -q "主=true" /tmp/health-backup-down.txt
             grep -q "备用=false" /tmp/health-backup-down.txt
             awk "/su_netflix/{show=2} show>0{print;show--}" /run/smartdns-unlock/platforms.conf | grep -q "unlock_primary"
             sed -i "s|^UNLOCK_BACKUP=.*|UNLOCK_BACKUP=https://dns.google/dns-query|" /etc/smartdns-unlock/config.env
-            systemctl kill -s HUP smartunlock.service
+            systemctl kill --kill-whom=main -s HUP smartunlock.service
             sleep 3
             smartunlock health-check | grep -q "备用=true"
             smartunlock on netflix primary
