@@ -22,7 +22,7 @@ PROBES = {
     "primevideo": {"function": "MediaUnlockTest_PrimeVideo_Region", "labels": ["Amazon Prime Video:"]},
     "max": {"function": "MediaUnlockTest_HBOMax", "labels": ["HBO Max:"]},
     "hulu": {"function": "MediaUnlockTest_HuluUS", "labels": ["Hulu:"]},
-    "spotify": {"function": "MediaUnlockTest_Spotify", "labels": ["Spotify:"]},
+    "spotify": {"function": "MediaUnlockTest_Spotify", "labels": ["Spotify Region:", "Spotify:"]},
     "tiktok": {"function": "MediaUnlockTest_Tiktok", "labels": ["Tiktok:", "TikTok:"]},
     "dazn": {"function": "MediaUnlockTest_Dazn", "labels": ["Dazn:", "DAZN:"]},
     "bbciplayer": {"function": "MediaUnlockTest_BBCiPLAYER", "labels": ["BBC iPLAYER:", "BBC iPlayer:"]},
