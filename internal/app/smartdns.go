@@ -108,10 +108,18 @@ func Render(cfg Config, s State, rules RulesFile) error {
 	if err := os.MkdirAll(filepath.Dir(cfg.SmartDNSConf), 0755); err != nil {
 		return err
 	}
+	var healthBinds strings.Builder
+	if cfg.Primary != "" {
+		fmt.Fprintf(&healthBinds, "bind %s -group unlock_primary -no-cache -no-speed-check\n", cfg.HealthPrimaryAddr)
+	}
+	if cfg.Backup != "" {
+		fmt.Fprintf(&healthBinds, "bind %s -group unlock_backup -no-cache -no-speed-check\n", cfg.HealthBackupAddr)
+	}
 	conf := fmt.Sprintf(`# Managed by smartunlock
 server-name smartunlock
 bind 127.0.0.1:53
 bind [::1]:53
+%s
 cache-size 32768
 cache-persist yes
 cache-file /var/cache/smartdns/smartdns.cache
@@ -127,7 +135,7 @@ server-https https://cloudflare-dns.com/dns-query -host-ip 1.1.1.1
 server-https https://dns.google/dns-query -host-ip 8.8.8.8
 conf-file %s
 conf-file %s
-`, filepath.Join(cfg.RuntimeDir, "upstreams.conf"), filepath.Join(cfg.RuntimeDir, "platforms.conf"))
+`, healthBinds.String(), filepath.Join(cfg.RuntimeDir, "upstreams.conf"), filepath.Join(cfg.RuntimeDir, "platforms.conf"))
 	return os.WriteFile(cfg.SmartDNSConf, []byte(conf), 0644)
 }
 
@@ -138,6 +146,11 @@ type SmartDNSProcess struct {
 }
 
 func NewSmartDNSProcess(cfg Config) *SmartDNSProcess { return &SmartDNSProcess{cfg: cfg} }
+func (p *SmartDNSProcess) SetConfig(cfg Config) {
+	p.mu.Lock()
+	p.cfg = cfg
+	p.mu.Unlock()
+}
 func (p *SmartDNSProcess) Start() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
