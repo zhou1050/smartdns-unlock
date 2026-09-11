@@ -79,6 +79,7 @@ backup_smartdns(){
   else
     touch "$d/installed-by-smartunlock"
   fi
+  return 0
 }
 
 record_smartdns_install(){
@@ -87,7 +88,8 @@ record_smartdns_install(){
   command -v smartdns > "$d/binary.path"
   systemctl daemon-reload >/dev/null 2>&1 || true
   fragment="$(systemctl show -p FragmentPath --value smartdns.service 2>/dev/null || true)"
-  [[ -n "$fragment" ]] && printf '%s\n' "$fragment" > "$d/service.path"
+  [[ -n "$fragment" ]] && printf '%s\n' "$fragment" > "$d/service.path" || true
+  return 0
 }
 
 install_binary(){
@@ -166,8 +168,9 @@ backup_dns(){
     cp -a /etc/resolv.conf "$WORK/resolv.conf"
     cp -a /etc/resolv.conf "$CONFIG_DIR/backups/system-dns-original/resolv.conf"
   fi
-  systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null && { touch "$WORK/resolved.enabled"; touch "$CONFIG_DIR/backups/system-dns-original/resolved.enabled"; }
-  systemctl is-active --quiet systemd-resolved.service 2>/dev/null && { touch "$WORK/resolved.active"; touch "$CONFIG_DIR/backups/system-dns-original/resolved.active"; }
+  systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null && { touch "$WORK/resolved.enabled"; touch "$CONFIG_DIR/backups/system-dns-original/resolved.enabled"; } || true
+  systemctl is-active --quiet systemd-resolved.service 2>/dev/null && { touch "$WORK/resolved.active"; touch "$CONFIG_DIR/backups/system-dns-original/resolved.active"; } || true
+  return 0
 }
 
 install_service(){
