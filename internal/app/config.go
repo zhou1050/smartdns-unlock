@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,8 @@ type Config struct {
 	SmartDNSConf      string
 	SmartDNSBin       string
 	ServiceName       string
+	HealthPrimaryAddr string
+	HealthBackupAddr  string
 	NativeAutoDetect  bool
 }
 
@@ -39,6 +42,7 @@ func DefaultConfig() Config {
 		ConfigPath: "/etc/smartdns-unlock/config.env", StatePath: "/var/lib/smartdns-unlock/state.json",
 		RulesPath: "/var/lib/smartdns-unlock/rules.json", RuntimeDir: "/run/smartdns-unlock",
 		SmartDNSConf: "/etc/smartdns/smartdns.conf", SmartDNSBin: "smartdns", ServiceName: "smartunlock.service",
+		HealthPrimaryAddr: "127.0.0.1:6053", HealthBackupAddr: "127.0.0.1:6054",
 		NativeAutoDetect: true,
 	}
 }
@@ -90,6 +94,8 @@ func LoadConfig(path string) (Config, error) {
 	set("TG_BOT_TOKEN", &c.TGBotToken)
 	set("TG_CHAT_ID", &c.TGChatID)
 	set("SMARTDNS_BIN", &c.SmartDNSBin)
+	set("HEALTH_PRIMARY_ADDR", &c.HealthPrimaryAddr)
+	set("HEALTH_BACKUP_ADDR", &c.HealthBackupAddr)
 	if v := m["CHECK_INTERVAL"]; v != "" {
 		if d, e := time.ParseDuration(v); e == nil {
 			c.CheckInterval = d
@@ -138,6 +144,15 @@ func (c Config) Validate() error {
 	}
 	if c.CheckInterval < time.Minute {
 		return fmt.Errorf("CHECK_INTERVAL must be >=1m")
+	}
+	for name, addr := range map[string]string{"HEALTH_PRIMARY_ADDR": c.HealthPrimaryAddr, "HEALTH_BACKUP_ADDR": c.HealthBackupAddr} {
+		h, _, err := net.SplitHostPort(addr)
+		if err != nil || (h != "127.0.0.1" && h != "::1") {
+			return fmt.Errorf("%s must be a loopback host:port", name)
+		}
+	}
+	if c.HealthPrimaryAddr == c.HealthBackupAddr {
+		return fmt.Errorf("health listener addresses must differ")
 	}
 	return nil
 }
