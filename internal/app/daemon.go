@@ -19,6 +19,19 @@ func nextClock(now time.Time, hhmm string) time.Time {
 	return n
 }
 
+func resetTimer(t *time.Timer, d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	t.Reset(d)
+}
+
 func RunDaemon(ctx context.Context, cfg Config) error {
 	if err := EnsureDirs(cfg); err != nil {
 		return err
@@ -55,6 +68,7 @@ func RunDaemon(ctx context.Context, cfg Config) error {
 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sig)
 	health := time.NewTicker(cfg.CheckInterval)
 	defer health.Stop()
 	ruleTimer := time.NewTimer(time.Until(nextClock(time.Now(), cfg.RuleUpdateTime)))
@@ -70,10 +84,18 @@ func RunDaemon(ctx context.Context, cfg Config) error {
 			return nil
 		case s := <-sig:
 			if s == syscall.SIGHUP {
-				if nc, e := LoadConfig(cfg.ConfigPath); e == nil {
-					cfg = nc
-					m.Cfg = nc
+				nc, e := LoadConfig(cfg.ConfigPath)
+				if e != nil {
+					log.Printf("reload config: %v", e)
+					continue
 				}
+				if e = nc.Validate(); e != nil {
+					log.Printf("reload config rejected: %v", e)
+					continue
+				}
+				cfg = nc
+				m.Cfg = nc
+				m.DNS.SetConfig(nc)
 				if st, e := LoadState(cfg.StatePath); e == nil {
 					m.Mu.Lock()
 					m.State = st
@@ -84,12 +106,20 @@ func RunDaemon(ctx context.Context, cfg Config) error {
 					m.Rules = rr
 					m.Mu.Unlock()
 				}
-				_ = m.Apply(true)
+				health.Reset(cfg.CheckInterval)
+				resetTimer(ruleTimer, time.Until(nextClock(time.Now(), cfg.RuleUpdateTime)))
+				resetTimer(platformTimer, time.Until(nextClock(time.Now(), cfg.PlatformCheckTime)))
+				resetTimer(reportTimer, time.Until(nextClock(time.Now(), cfg.TGReportTime)))
+				if e := m.Apply(true); e != nil {
+					log.Printf("reload apply: %v", e)
+				} else {
+					log.Printf("configuration reloaded and schedules reset")
+				}
 				continue
 			}
 			return nil
 		case <-health.C:
-			c, cancel := context.WithTimeout(ctx, 20*time.Second)
+			c, cancel := context.WithTimeout(ctx, 12*time.Second)
 			_, _, _ = m.HealthCheck(c)
 			cancel()
 		case <-ruleTimer.C:
