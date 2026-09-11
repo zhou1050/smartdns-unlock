@@ -1,156 +1,114 @@
 # SmartDNS Unlock
 
-面向 Debian 的 SmartDNS 流媒体与 AI 平台分流工具。项目固定使用 SmartDNS Release 48.4，普通域名使用 TCP 443 测速；解锁域名关闭测速，并交给指定的 DoH、DoT、UDP、TCP、DoQ 或 DoH3 解锁上游。
+Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。普通域名走公共 DNS；需要解锁的平台按规则交给指定的解锁 DNS。项目固定使用 SmartDNS Release 48.4。
 
-## 功能
+## 核心功能
 
-- 39 个内置平台，影视与 AI 分类一键开关
-- 每个平台独立域名文件，可以绑定不同解锁上游组
-- 每组支持主上游和备用上游；备用项带 SmartDNS `-fallback`
-- GitHub Actions 每天构建一次规则并自动提交
-- Debian 服务器每天自动拉取规则，失败自动保留或恢复上一版
-- 自动备份并将 Debian 系统 DNS 指向本机 SmartDNS，安装验证失败自动恢复
-- 原 SmartDNS 配置首次安装时备份为 `smartdns.conf.before-smartunlock`
-- 私有仓库使用的 GitHub Token 仅保存在服务器 `/etc/smartdns-unlock/github.env`，权限为 `0600`
+- 内置 39 个影视与 AI 平台，可按平台或分类开关。
+- 主 / 备用解锁 DNS，支持 UDP、TCP、DoT、DoH、DoQ、DoH3。
+- **安装时先检测服务器原生解锁能力**：明确原生可用的平台保持本地直出；失败或无法可靠判定的平台自动走解锁 DNS。
+- **每天复检服务器当前最终配置的综合解锁能力**，不会为了复检绕过已经配置的解锁 DNS。
+- 如果主解锁 DNS“能解析但平台仍不解锁”，会单独尝试备用 DNS 的实际平台能力；主备都失败则保留失败状态并 Telegram 报警。
+- 解锁 DNS 网络健康检查、规则每日同步、失败回滚、Telegram 状态通知。
+- 安装前自动备份系统 DNS 和原 SmartDNS 配置；安装验证失败自动恢复系统 DNS。
+
+> 自动原生优先只采用能够明确判断“可用 / 不可用”的平台探针。无法可靠判断的平台默认走解锁 DNS，避免误判导致平台不可用。
 
 ## 一键安装
-
-公开仓库无需 Token。在 Debian 上执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/main/install.sh | sudo -E bash
 ```
 
-安装器会自动安装 SmartDNS Release 48.4、备份原 DNS 配置、接管系统 DNS，并引导填写主、备用解锁 DNS 以及各自的 DoH/DoT 协议。SmartDNS 默认只监听本机回环地址；命中启用平台列表的域名走解锁 DNS，其他域名走 Cloudflare 和 Google DoH。
-
-也可以用一行参数直接安装。`CHECK_INTERVAL` 是检测周期，`TGBOT` 格式为 `BOT_TOKEN|CHAT_ID`，`TG_REPORT_TIME` 是服务器本地时间的每日报告时间：
+也可以提前传入参数：
 
 ```bash
-UNLOCK_PRIMARY='https://主解锁DNS/dns-query' UNLOCK_BACKUP='tls://备用解锁DNS:853' CHECK_INTERVAL='5m' TGBOT='BOT_TOKEN|CHAT_ID' TG_REPORT_TIME='09:00' bash <(curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/main/install.sh)
+UNLOCK_PRIMARY='https://主解锁DNS/dns-query' \
+UNLOCK_BACKUP='tls://备用解锁DNS:853' \
+TGBOT='BOT_TOKEN|CHAT_ID' \
+TG_REPORT_TIME='09:00' \
+bash <(curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/main/install.sh)
 ```
 
-每次检测会对每条解锁 DNS 连续尝试两次。只有一个上游组连续 3 个周期全部失败，才会让该组平台临时改走公共 DNS；连续恢复 3 个周期且满足 300 秒冷却时间后，才恢复解锁分流。状态切换会即时发送 Telegram 通知，每天还会汇报一次服务、系统 DNS、主备上游、启用平台和规则更新时间。
+`AUTO_NATIVE_DETECT=0` 可关闭安装时的原生解锁检测。未设置时默认开启。
 
-## 私有仓库安装
+## 自动解锁逻辑
 
-私有仓库无法匿名下载。建议创建一个只允许读取本仓库 `Contents` 的 Fine-grained personal access token。不要使用拥有全部仓库写权限的经典 Token。
+安装时：
 
-在 Debian 服务器上执行：
+1. 先用服务器当前原生网络 / DNS 测试真实平台解锁能力。
+2. 原生明确通过的平台不写入 SmartDNS 解锁规则，优先本地直出。
+3. 原生失败或无法判定的平台自动加入解锁 DNS 分流。
+4. SmartDNS 接管后再次按最终配置做综合复检，并通过 Telegram 汇报结果。
+
+每日复检：
+
+1. 直接测试服务器**当前实际配置**的综合解锁能力。
+2. 原本本地直出的平台失效时，自动切入默认解锁 DNS 并复测。
+3. 已走默认解锁 DNS 但实际平台仍失败时，单独测试备用 DNS；备用能用则该平台自动切到备用线路。
+4. 主、备用都不能解锁时不伪装成功，Telegram 会列出仍未解锁的平台。
+
+## 常用命令
 
 ```bash
-export SMARTUNLOCK_REPOSITORY='OWNER/smartdns-unlock'
-read -rsp 'GitHub只读Token: ' GITHUB_TOKEN; echo
-export GITHUB_TOKEN
-
-SMARTUNLOCK_CURL_CONFIG="$(mktemp)"
-printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" > "$SMARTUNLOCK_CURL_CONFIG"
-chmod 600 "$SMARTUNLOCK_CURL_CONFIG"
-curl -fsSL --config "$SMARTUNLOCK_CURL_CONFIG" \
-  -H 'Accept: application/vnd.github.raw+json' \
-  "https://api.github.com/repos/$SMARTUNLOCK_REPOSITORY/contents/install.sh" |
-  sudo -E bash
-
-rm -f "$SMARTUNLOCK_CURL_CONFIG"
-unset GITHUB_TOKEN
-```
-
-安装器会询问主、备用解锁 DNS。输入 DoH 时形如：
-
-```text
-https://example.com/dns-query
-```
-
-输入 DoT 时形如：
-
-```text
-tls://dns.example.com:853
-```
-
-如果主 DNS 是 DoT，请在安装前指定协议：
-
-```bash
-export UNLOCK_PRIMARY_PROTO=dot
-```
-
-支持的协议名称：`udp`、`tcp`、`dot`、`doh`、`doq`、`doh3`。
-
-## 平台控制
-
-```bash
-# 查看所有平台
 smartunlock list
-
-# 一键开启或关闭整个分类
+smartunlock on netflix
 smartunlock on streaming
 smartunlock on ai
-smartunlock off streaming
-smartunlock off ai
-
-# 单独控制平台
-smartunlock on netflix
 smartunlock off netflix
-smartunlock on openai
-
-# 状态和立即更新
+smartunlock upstream-list
 smartunlock status
 smartunlock update
+smartunlock health-check
+smartunlock health-report
+
+# 手动立即执行一次综合平台复检 / 自动修复
+/opt/smartdns-unlock/scripts/auto_unlock.sh daily
 ```
 
-安装时填写了解锁 DNS 后，默认开启所有影视和 AI 平台。
+## 安装后的主要文件
 
-## 多条解锁线路
-
-建立日本线路组，并让 Netflix 使用它：
-
-```bash
-smartunlock upstream-add jp primary doh 'https://jp-primary.example/dns-query'
-smartunlock upstream-add jp backup dot 'tls://jp-backup.example:853'
-smartunlock on netflix jp
-```
-
-建立美国 AI 线路组：
-
-```bash
-smartunlock upstream-add ai_us primary doh 'https://ai-primary.example/dns-query'
-smartunlock upstream-add ai_us backup doh 'https://ai-backup.example/dns-query'
-smartunlock on ai ai_us
-```
-
-查看上游：
-
-```bash
-smartunlock upstream-list
-```
-
-## 内置平台
-
-影视：Netflix、Disney+、YouTube、Prime Video、Max/HBO Max、Hulu、Apple TV+、Spotify、TikTok、DAZN、BBC iPlayer、Paramount+、Peacock、Crunchyroll、ABEMA、Bahamut、Bilibili、iQIYI、Viu、TVB。
-
-AI：ChatGPT/OpenAI、Claude、Gemini、GitHub Copilot、Microsoft Copilot、Perplexity、Grok、Poe、Midjourney、Suno、DeepSeek、Cursor、Canva、Notion AI、Character.AI、Runway、Mistral、Hugging Face、OpenRouter。
-
-## 自定义域名
-
-在 `rules/custom/<平台ID>.txt` 中每行写一个域名。GitHub Actions 会将其合并进对应规则。例如：
-
-```text
-# rules/custom/netflix.txt
-example.netflix-related-domain.com
-```
+| 路径 | 用途 |
+|---|---|
+| `/usr/local/sbin/smartunlock` | 日常管理命令入口 |
+| `/opt/smartdns-unlock/bin/smartunlock` | `smartunlock` 主程序源文件 |
+| `/opt/smartdns-unlock/config/platforms.json` | 平台清单、名称、分类和规则来源 |
+| `/opt/smartdns-unlock/scripts/build_rules.py` | 构建平台域名规则 |
+| `/opt/smartdns-unlock/scripts/check_upstreams.py` | 检测主 / 备用解锁 DNS 网络健康 |
+| `/opt/smartdns-unlock/scripts/platform_check.py` | 判断真实平台是否解锁 |
+| `/opt/smartdns-unlock/scripts/auto_unlock.sh` | 每日综合复检和自动切换逻辑 |
+| `/opt/smartdns-unlock/vendor/region-restriction-check.sh` | 安装时固定版本的平台实际可用性探针 |
+| `/etc/smartdns/smartdns.conf` | SmartDNS 主配置，由本项目管理 |
+| `/etc/smartdns/smartdns.conf.before-smartunlock` | 安装前原 SmartDNS 配置备份（存在原配置时生成） |
+| `/etc/smartdns-unlock/upstreams.tsv` | 解锁 DNS 线路组配置 |
+| `/etc/smartdns-unlock/enabled.tsv` | 当前需要 SmartDNS 解锁的平台及所属线路组 |
+| `/etc/smartdns-unlock/auto-native.tsv` | 安装检测后仍优先本地直出的平台 |
+| `/etc/smartdns-unlock/rules/` | 当前平台域名规则 |
+| `/etc/smartdns-unlock/generated/` | 自动生成并加载到 SmartDNS 的配置 |
+| `/etc/smartdns-unlock/platform-check.json` | 最近一次综合平台检测结果 |
+| `/etc/smartdns-unlock/native-platform-check.json` | 安装时原生解锁检测结果 |
+| `/etc/smartdns-unlock/health.env` | 健康检查和 Telegram 配置，权限 `0600` |
+| `/etc/smartdns-unlock/github.env` | 仓库 / Token 配置，权限 `0600` |
+| `/etc/smartdns-unlock/backups/` | 系统 DNS 和生成配置的备份 / 回滚数据 |
+| `/var/log/smartdns/smartdns.log` | SmartDNS 日志 |
 
 ## 定时任务
 
-- GitHub Actions：每天 `19:17 UTC` 构建规则，可在 Actions 页面手动运行。
-- Debian：每天本机时间 `05:17` 后随机延迟最多 20 分钟拉取仓库。
+- `smartunlock-health.timer`：按 `CHECK_INTERVAL` 检查解锁 DNS 网络健康。
+- `smartunlock-update.timer`：每天本机时间 `05:17` 后随机延迟最多 20 分钟同步规则。
+- `smartunlock-platform.timer`：每天本机时间 `06:17` 后随机延迟最多 20 分钟做综合平台解锁复检和自动修复。
+- `smartunlock-report.timer`：按 `TG_REPORT_TIME` 发送 Telegram 日报。
 
-检查服务器定时器：
+查看状态：
 
 ```bash
-systemctl list-timers smartunlock-update.timer
+systemctl list-timers 'smartunlock-*'
+journalctl -u smartunlock-platform.service -n 100 --no-pager
 journalctl -u smartunlock-update.service -n 100 --no-pager
 ```
 
 ## 说明
 
-DNS 解锁是否成功取决于解锁 DNS 服务商。部分 AI 平台会校验实际出口 IP、账号地区或支付地区；如果服务商不提供对应代理能力，只有 DNS 分流可能仍无法使用。
+DNS 解锁能力最终取决于解锁 DNS 服务商。部分 AI 平台还会校验实际出口 IP、账号地区或支付地区，因此 DNS 分流并不能保证所有账号场景都可用。
 
-规则主要从 [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) 构建，临时拉取失败时会保留上一版生成结果。
+规则主要从 `v2fly/domain-list-community` 构建；平台实际可用性检测使用固定版本的 `1-stream/RegionRestrictionCheck` 探针，避免上游脚本变化直接影响已安装服务器。
