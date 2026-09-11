@@ -65,7 +65,7 @@ jobs:
             test "$(awk "/^nameserver/{print \$2; exit}" /etc/resolv.conf)" = 127.0.0.1
             getent ahostsv4 github.com >/dev/null
             smartunlock status
-            smartunlock list | head -20
+            smartunlock list | sed -n "1,20p"
             smartunlock health-check | tee /tmp/health-initial.txt
             grep -q "主=true" /tmp/health-initial.txt
             grep -q "备用=true" /tmp/health-initial.txt
