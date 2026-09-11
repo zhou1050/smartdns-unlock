@@ -16,6 +16,8 @@ TGBOT_CONFIG="${TGBOT:-}"
 TG_BOT_TOKEN="${TG_BOT_TOKEN:-}"
 TG_CHAT_ID="${TG_CHAT_ID:-}"
 TG_REPORT_TIME="${TG_REPORT_TIME:-09:00}"
+AUTO_NATIVE_DETECT="${AUTO_NATIVE_DETECT:-1}"
+RRC_COMMIT="${RRC_COMMIT:-ab6829eb07c4c592c1f8f3dac736d675667d1a08}"
 DNS_PREPARED=0
 DNS_COMMITTED=0
 
@@ -34,6 +36,7 @@ source /etc/os-release
 [[ "$HEALTH_RECOVER_THRESHOLD" =~ ^[1-9][0-9]*$ ]] || die "连续恢复阈值必须是正整数"
 [[ "$HEALTH_COOLDOWN_SECONDS" =~ ^[0-9]+$ ]] || die "恢复冷却时间必须是秒数"
 [[ "$TG_REPORT_TIME" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "Telegram 每日报告时间格式错误，例如：09:00"
+[[ "$AUTO_NATIVE_DETECT" =~ ^[01]$ ]] || die "AUTO_NATIVE_DETECT 只能是 0 或 1"
 if [[ -n "$TGBOT_CONFIG" && ( -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ) ]]; then
   [[ "$TGBOT_CONFIG" == *'|'* ]] || die "TGBOT 格式应为 'BOT_TOKEN|CHAT_ID'"
   TG_BOT_TOKEN="${TGBOT_CONFIG%%|*}"
@@ -96,10 +99,13 @@ install_smartdns() {
 
 install_project() {
   info "安装控制程序和规则"
-  install -d -m 0755 "$APP_DIR/bin" "$APP_DIR/config" "$APP_DIR/scripts" "$ETC_DIR/rules" "$ETC_DIR/generated" "$ETC_DIR/backups" /var/cache/smartdns /var/log/smartdns
+  install -d -m 0755 "$APP_DIR/bin" "$APP_DIR/config" "$APP_DIR/scripts" "$APP_DIR/vendor" \
+    "$ETC_DIR/rules" "$ETC_DIR/generated" "$ETC_DIR/backups" /var/cache/smartdns /var/log/smartdns
   install -m 0755 "$WORK_DIR/project/bin/smartunlock" "$APP_DIR/bin/smartunlock"
   install -m 0755 "$WORK_DIR/project/scripts/build_rules.py" "$APP_DIR/scripts/build_rules.py"
   install -m 0755 "$WORK_DIR/project/scripts/check_upstreams.py" "$APP_DIR/scripts/check_upstreams.py"
+  install -m 0755 "$WORK_DIR/project/scripts/platform_check.py" "$APP_DIR/scripts/platform_check.py"
+  install -m 0755 "$WORK_DIR/project/scripts/auto_unlock.sh" "$APP_DIR/scripts/auto_unlock.sh"
   install -m 0644 "$WORK_DIR/project/config/platforms.json" "$APP_DIR/config/platforms.json"
   if find "$WORK_DIR/project/rules/generated" -maxdepth 1 -name '*.txt' -type f -size +0c | grep -q .; then
     cp -a "$WORK_DIR/project/rules/generated/." "$ETC_DIR/rules/"
@@ -116,8 +122,45 @@ install_project() {
   printf 'CHECK_INTERVAL=%q\nHEALTH_FAIL_THRESHOLD=%q\nHEALTH_RECOVER_THRESHOLD=%q\nHEALTH_COOLDOWN_SECONDS=%q\nTG_BOT_TOKEN=%q\nTG_CHAT_ID=%q\nTG_REPORT_TIME=%q\n' \
     "$CHECK_INTERVAL" "$HEALTH_FAIL_THRESHOLD" "$HEALTH_RECOVER_THRESHOLD" "$HEALTH_COOLDOWN_SECONDS" "$TG_BOT_TOKEN" "$TG_CHAT_ID" "$TG_REPORT_TIME" > "$ETC_DIR/health.env"
   chmod 0600 "$ETC_DIR/health.env"
-  touch "$ETC_DIR/enabled.tsv" "$ETC_DIR/upstreams.tsv"
-  chmod 0600 "$ETC_DIR/enabled.tsv" "$ETC_DIR/upstreams.tsv"
+  touch "$ETC_DIR/enabled.tsv" "$ETC_DIR/upstreams.tsv" "$ETC_DIR/auto-native.tsv"
+  chmod 0600 "$ETC_DIR/enabled.tsv" "$ETC_DIR/upstreams.tsv" "$ETC_DIR/auto-native.tsv"
+}
+
+install_platform_probe() {
+  local url="https://raw.githubusercontent.com/1-stream/RegionRestrictionCheck/$RRC_COMMIT/check.sh"
+  if [[ "$AUTO_NATIVE_DETECT" != 1 ]]; then
+    info "已关闭安装时原生解锁检测"
+    return
+  fi
+  info "安装平台实际解锁探针"
+  if curl -fsSL --retry 3 --max-time 30 "$url" -o "$APP_DIR/vendor/region-restriction-check.sh"; then
+    chmod 0755 "$APP_DIR/vendor/region-restriction-check.sh"
+  else
+    rm -f "$APP_DIR/vendor/region-restriction-check.sh"
+    warn "平台探针下载失败，将保守地让平台使用解锁 DNS；不影响 SmartDNS 安装"
+  fi
+}
+
+detect_native_unlock() {
+  local report="$ETC_DIR/native-platform-check.json" pass_count fail_count unknown_count
+  : > "$ETC_DIR/auto-native.tsv"
+  chmod 0600 "$ETC_DIR/auto-native.tsv"
+  [[ "$AUTO_NATIVE_DETECT" == 1 ]] || return 0
+  [[ -s "$APP_DIR/vendor/region-restriction-check.sh" ]] || return 0
+  info "检测服务器当前原生平台解锁能力（原生可用的平台优先直连）"
+  if ! python3 "$APP_DIR/scripts/platform_check.py" \
+      --rrc "$APP_DIR/vendor/region-restriction-check.sh" \
+      --registry "$APP_DIR/config/platforms.json" \
+      --output "$report" --timeout 300 >/dev/null; then
+    warn "原生平台检测失败，将保守地使用解锁 DNS"
+    return 0
+  fi
+  jq -r '.platforms | to_entries[] | select(.value.status == "pass") | .key' "$report" > "$ETC_DIR/auto-native.tsv"
+  chmod 0600 "$ETC_DIR/auto-native.tsv"
+  pass_count="$(jq '[.platforms[].status | select(. == "pass")] | length' "$report")"
+  fail_count="$(jq '[.platforms[].status | select(. == "fail")] | length' "$report")"
+  unknown_count="$(jq '[.platforms[].status | select(. == "unknown")] | length' "$report")"
+  info "原生实测：通过 $pass_count，失败 $fail_count，未判定 $unknown_count；未判定项默认走解锁 DNS"
 }
 
 write_smartdns_config() {
@@ -185,7 +228,7 @@ choose_protocol() {
 }
 
 configure_unlock_dns() {
-  local primary="${UNLOCK_PRIMARY:-}" backup="${UNLOCK_BACKUP:-}" primary_proto="${UNLOCK_PRIMARY_PROTO:-}" backup_proto="${UNLOCK_BACKUP_PROTO:-}"
+  local primary="${UNLOCK_PRIMARY:-}" backup="${UNLOCK_BACKUP:-}" primary_proto="${UNLOCK_PRIMARY_PROTO:-}" backup_proto="${UNLOCK_BACKUP_PROTO:-}" id
   if [[ -z "$primary" && -r /dev/tty ]]; then
     printf '\n请输入主解锁 DNS（DoH: https://域名/dns-query；DoT: tls://域名:853；留空则稍后配置）：' >/dev/tty
     IFS= read -r primary </dev/tty || true
@@ -204,8 +247,17 @@ configure_unlock_dns() {
   fi
   printf 'default|primary|%s|%s|\n' "$primary_proto" "$primary" > "$ETC_DIR/upstreams.tsv"
   [[ -n "$backup" ]] && printf 'default|backup|%s|%s|\n' "$backup_proto" "$backup" >> "$ETC_DIR/upstreams.tsv"
-  jq -r '.platforms[].id + "|default"' "$APP_DIR/config/platforms.json" > "$ETC_DIR/enabled.tsv"
+
+  : > "$ETC_DIR/enabled.tsv"
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    if grep -Fqx "$id" "$ETC_DIR/auto-native.tsv" 2>/dev/null; then
+      continue
+    fi
+    printf '%s|default\n' "$id" >> "$ETC_DIR/enabled.tsv"
+  done < <(jq -r '.platforms[].id' "$APP_DIR/config/platforms.json")
   chmod 0600 "$ETC_DIR/upstreams.tsv" "$ETC_DIR/enabled.tsv"
+  info "原生已通过的平台保持本地直出，其余平台自动使用解锁 DNS"
 }
 
 snapshot_system_dns() {
@@ -285,21 +337,26 @@ install_services() {
   sed "s|@CHECK_INTERVAL@|$CHECK_INTERVAL|g" "$WORK_DIR/project/systemd/smartunlock-health.timer" > /etc/systemd/system/smartunlock-health.timer
   install -m 0644 "$WORK_DIR/project/systemd/smartunlock-report.service" /etc/systemd/system/smartunlock-report.service
   sed "s|@TG_REPORT_TIME@|$TG_REPORT_TIME|g" "$WORK_DIR/project/systemd/smartunlock-report.timer" > /etc/systemd/system/smartunlock-report.timer
+  install -m 0644 "$WORK_DIR/project/systemd/smartunlock-platform.service" /etc/systemd/system/smartunlock-platform.service
+  install -m 0644 "$WORK_DIR/project/systemd/smartunlock-platform.timer" /etc/systemd/system/smartunlock-platform.timer
   systemctl disable --now smartdns.service 2>/dev/null || true
   systemctl daemon-reload
-  systemctl enable smartdns-unlock.service smartunlock-update.timer smartunlock-health.timer smartunlock-report.timer >/dev/null
+  systemctl enable smartdns-unlock.service smartunlock-update.timer smartunlock-health.timer smartunlock-report.timer smartunlock-platform.timer >/dev/null
   /usr/local/sbin/smartunlock apply
-  systemctl start smartunlock-update.timer smartunlock-health.timer smartunlock-report.timer
+  systemctl start smartunlock-update.timer smartunlock-health.timer smartunlock-report.timer smartunlock-platform.timer
 }
 
 download_project
 install_smartdns
 install_project
+install_platform_probe
+detect_native_unlock
 write_smartdns_config
 configure_unlock_dns
 prepare_system_dns
 install_services
 configure_system_dns
+"$APP_DIR/scripts/auto_unlock.sh" install || warn "首次综合解锁复检未完成，可稍后手动执行 $APP_DIR/scripts/auto_unlock.sh"
 /usr/local/sbin/smartunlock health-report
 
 info "安装完成"
@@ -311,3 +368,4 @@ printf '  smartunlock off netflix\n'
 printf '  smartunlock status\n'
 printf '  smartunlock health-check\n'
 printf '  smartunlock health-report\n'
+printf '  /opt/smartdns-unlock/scripts/auto_unlock.sh daily\n'
