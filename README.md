@@ -1,6 +1,6 @@
 # SmartDNS Unlock
 
-Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务器端改为 **单 Go 二进制 + 单 systemd 服务**：规则同步、DNS 健康检查、平台复检、主备切换和 Telegram 通知都由 `smartunlock` 自己完成。
+Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务器端采用 **单 Go 二进制 + 单 systemd 服务**：规则同步、DNS 健康检查、平台复检、主备切换和 Telegram 通知都由 `smartunlock` 自己完成。
 
 ## 功能
 
@@ -11,6 +11,7 @@ Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务器端改
 - 主 DNS 网络故障时自动使用备用；主 DNS 虽然能解析但平台实际仍失败时，会实测备用线路，备用可用则该平台切备用。
 - 主备都不能实际解锁时保留失败状态并 Telegram 报警，不伪装成功。
 - 每天自动同步 GitHub 规则；新规则应用失败不会影响已有规则缓存。
+- 内置安全卸载：恢复安装前系统 DNS；服务器原本已有 SmartDNS 时恢复原 SmartDNS，而不是删除它。
 
 > 平台“原生优先”只使用程序内能够可靠判断可用性的探针。没有可靠探针的平台不会因为网页能打开就判定为原生解锁，而是保守使用解锁 DNS。
 
@@ -68,6 +69,30 @@ systemctl status smartunlock --no-pager
 journalctl -u smartunlock -n 100 --no-pager
 ```
 
+## 卸载
+
+交互确认后卸载：
+
+```bash
+sudo smartunlock uninstall
+```
+
+无人值守 / 直接确认：
+
+```bash
+sudo smartunlock uninstall -y
+```
+
+卸载不是简单删除文件，会尽量恢复安装前状态：
+
+1. 停止并禁用 `smartunlock.service`。
+2. 恢复安装前的 `/etc/resolv.conf`；如果安装前使用 `systemd-resolved`，恢复它原来的启用 / 运行状态。
+3. 如果安装前服务器**已经有 SmartDNS**，恢复安装前备份的 SmartDNS 二进制、配置和服务状态，不删除原 SmartDNS。
+4. 如果 SmartDNS 是本项目安装的，则停止并清理该 SmartDNS 及本项目产生的缓存 / 日志。
+5. 删除 `smartunlock` 二进制、状态、规则缓存、临时运行目录和 systemd 服务文件。
+
+安装时的恢复信息保存在 `/etc/smartdns-unlock/backups/`。如果关键备份缺失，卸载程序采用保守策略：**宁可提示警告并保留未知来源的 SmartDNS，也不会直接误删。**
+
 ## 服务器安装后有哪些文件
 
 长期保留的核心文件很少：
@@ -76,11 +101,12 @@ journalctl -u smartunlock -n 100 --no-pager
 |---|---|
 | `/usr/local/bin/smartunlock` | 单个静态 Go 主程序，约 6 MB；包含调度、检测、切换、TG 和 SmartDNS 配置生成逻辑 |
 | `/etc/smartdns-unlock/config.env` | 主 / 备用 DNS、TG、检测周期和每日时间，权限 `0600` |
-| `/var/lib/smartdns-unlock/state.json` | 当前各平台走原生 / 主 DNS / 备用 DNS的状态及最近检测结果 |
+| `/var/lib/smartdns-unlock/state.json` | 当前各平台走原生 / 主 DNS / 备用 DNS 的状态及最近检测结果 |
 | `/var/lib/smartdns-unlock/rules.json` | 所有平台域名规则的单文件本地缓存 |
 | `/etc/systemd/system/smartunlock.service` | 唯一的 SmartUnlock systemd 服务 |
 | `/etc/smartdns/smartdns.conf` | 由 `smartunlock` 自动生成的 SmartDNS 主配置 |
-| `/etc/smartdns-unlock/backups/system-dns-original/` | 安装前系统 DNS 备份，仅用于故障恢复 |
+| `/etc/smartdns-unlock/backups/system-dns-original/` | 安装前系统 DNS 备份，用于卸载 / 故障恢复 |
+| `/etc/smartdns-unlock/backups/smartdns-original/` | 安装前 SmartDNS 来源、配置、二进制和服务状态备份；仅用于安全恢复 |
 | `/var/log/smartdns/smartdns.log` | SmartDNS 自身日志 |
 
 运行时程序会把 `rules.json` 临时展开到：
