@@ -170,15 +170,20 @@ cmd_update() {
   source "$env_file"
   repository="${SMARTUNLOCK_REPOSITORY:-}"
   token="${GITHUB_TOKEN:-}"
-  [[ "$repository" == */* && -n "$token" ]] || die "GitHub 仓库或 Token 未配置"
+  [[ "$repository" == */* ]] || die "GitHub 仓库未配置"
   tmp="$(mktemp -d "$ETC_DIR/.update.XXXXXX")"
   archive="$tmp/repo.tar.gz"
   curl_config="$tmp/curl.conf"
-  printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_config"
-  chmod 0600 "$curl_config"
-  curl -fsSL --retry 3 --config "$curl_config" \
-    -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$repository/tarball/main" -o "$archive"
+  if [[ -n "$token" ]]; then
+    printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_config"
+    chmod 0600 "$curl_config"
+    curl -fsSL --retry 3 --config "$curl_config" \
+      -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/$repository/tarball/main" -o "$archive"
+  else
+    curl -fsSL --retry 3 \
+      "https://github.com/$repository/archive/refs/heads/main.tar.gz" -o "$archive"
+  fi
   mkdir "$tmp/repo"
   tar -xzf "$archive" --strip-components=1 -C "$tmp/repo"
   extracted="$tmp/repo/rules/generated"

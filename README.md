@@ -9,8 +9,19 @@
 - 每组支持主上游和备用上游；备用项带 SmartDNS `-fallback`
 - GitHub Actions 每天构建一次规则并自动提交
 - Debian 服务器每天自动拉取规则，失败自动保留或恢复上一版
+- 自动备份并将 Debian 系统 DNS 指向本机 SmartDNS，安装验证失败自动恢复
 - 原 SmartDNS 配置首次安装时备份为 `smartdns.conf.before-smartunlock`
-- GitHub Token 仅保存在服务器 `/etc/smartdns-unlock/github.env`，权限为 `0600`
+- 私有仓库使用的 GitHub Token 仅保存在服务器 `/etc/smartdns-unlock/github.env`，权限为 `0600`
+
+## 一键安装
+
+公开仓库无需 Token。在 Debian 上执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/main/install.sh | sudo -E bash
+```
+
+安装器会自动安装 SmartDNS Release 48.4、备份原 DNS 配置、接管系统 DNS，并引导填写主、备用解锁 DNS 以及各自的 DoH/DoT 协议。SmartDNS 默认只监听本机回环地址；命中启用平台列表的域名走解锁 DNS，其他域名走 Cloudflare 和 Google DoH。
 
 ## 私有仓库安装
 

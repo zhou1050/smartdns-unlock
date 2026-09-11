@@ -3,11 +3,13 @@ set -Eeuo pipefail
 
 PROJECT_NAME="smartdns-unlock"
 SMARTDNS_TAG="${SMARTDNS_TAG:-Release48.4}"
-REPOSITORY="${SMARTUNLOCK_REPOSITORY:-}"
+REPOSITORY="${SMARTUNLOCK_REPOSITORY:-zhou1050/smartdns-unlock}"
 TOKEN="${GITHUB_TOKEN:-}"
 APP_DIR="/opt/smartdns-unlock"
 ETC_DIR="/etc/smartdns-unlock"
 SMARTDNS_DIR="/etc/smartdns"
+DNS_PREPARED=0
+DNS_COMMITTED=0
 
 info() { printf '\033[1;32m[安装]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[注意]\033[0m %s\n' "$*" >&2; }
@@ -19,24 +21,36 @@ die() { printf '\033[1;31m[失败]\033[0m %s\n' "$*" >&2; exit 1; }
 source /etc/os-release
 [[ "${ID:-}" == debian ]] || die "当前安装器仅支持 Debian"
 [[ "$REPOSITORY" == */* ]] || die "请设置 SMARTUNLOCK_REPOSITORY=GitHub用户名/smartdns-unlock"
-[[ -n "$TOKEN" ]] || die "私有仓库安装必须设置只读 GITHUB_TOKEN"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl jq tar gzip python3 build-essential libssl-dev dnsutils util-linux >/dev/null
 
 WORK_DIR="$(mktemp -d /tmp/smartdns-unlock-install.XXXXXX)"
-cleanup() { rm -rf -- "$WORK_DIR"; }
+cleanup() {
+  local status=$?
+  if [[ "$DNS_PREPARED" == 1 && "$DNS_COMMITTED" != 1 ]]; then
+    restore_system_dns || true
+  fi
+  rm -rf -- "$WORK_DIR"
+  return "$status"
+}
 trap cleanup EXIT
 
 download_project() {
-  info "下载私有仓库 $REPOSITORY"
-  printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$WORK_DIR/github-curl.conf"
-  chmod 0600 "$WORK_DIR/github-curl.conf"
-  curl -fsSL --retry 3 --config "$WORK_DIR/github-curl.conf" \
-    -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$REPOSITORY/tarball/main" \
-    -o "$WORK_DIR/project.tar.gz"
+  info "下载仓库 $REPOSITORY"
+  if [[ -n "$TOKEN" ]]; then
+    printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$WORK_DIR/github-curl.conf"
+    chmod 0600 "$WORK_DIR/github-curl.conf"
+    curl -fsSL --retry 3 --config "$WORK_DIR/github-curl.conf" \
+      -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/$REPOSITORY/tarball/main" \
+      -o "$WORK_DIR/project.tar.gz"
+  else
+    curl -fsSL --retry 3 \
+      "https://github.com/$REPOSITORY/archive/refs/heads/main.tar.gz" \
+      -o "$WORK_DIR/project.tar.gz"
+  fi
   mkdir "$WORK_DIR/project"
   tar -xzf "$WORK_DIR/project.tar.gz" --strip-components=1 -C "$WORK_DIR/project"
   [[ -x "$WORK_DIR/project/bin/smartunlock" || -f "$WORK_DIR/project/bin/smartunlock" ]] || die "仓库内容不完整"
@@ -90,7 +104,8 @@ write_smartdns_config() {
   cat > "$SMARTDNS_DIR/smartdns.conf" <<'EOF'
 # Managed by smartdns-unlock. Original backup: smartdns.conf.before-smartunlock
 server-name smartdns-unlock
-bind [::]:53
+bind 127.0.0.1:53
+bind [::1]:53
 cache-size 32768
 cache-persist yes
 cache-file /var/cache/smartdns/smartdns.cache
@@ -114,24 +129,124 @@ EOF
   install -m 0644 /dev/null "$ETC_DIR/generated/platforms.conf"
 }
 
+detect_protocol() {
+  local endpoint="$1"
+  case "$endpoint" in
+    https://*) printf 'doh\n' ;;
+    tls://*|*:853) printf 'dot\n' ;;
+    quic://*) printf 'doq\n' ;;
+    h3://*) printf 'doh3\n' ;;
+    tcp://*) printf 'tcp\n' ;;
+    *) printf 'doh\n' ;;
+  esac
+}
+
+choose_protocol() {
+  local label="$1" endpoint="$2" configured="$3" detected answer
+  if [[ -n "$configured" ]]; then
+    answer="$configured"
+  else
+    detected="$(detect_protocol "$endpoint")"
+    answer="$detected"
+    if [[ -r /dev/tty ]]; then
+      printf '%s解锁 DNS 协议 [doh/dot]（回车使用自动识别的 %s）：' "$label" "$detected" >/dev/tty
+      IFS= read -r answer </dev/tty || true
+      answer="${answer:-$detected}"
+    fi
+  fi
+  [[ "$answer" =~ ^(udp|tcp|dot|doh|doq|doh3)$ ]] || die "$label解锁 DNS 协议不支持：$answer"
+  printf '%s\n' "$answer"
+}
+
 configure_unlock_dns() {
-  local primary="${UNLOCK_PRIMARY:-}" backup="${UNLOCK_BACKUP:-}" primary_proto="${UNLOCK_PRIMARY_PROTO:-doh}" backup_proto="${UNLOCK_BACKUP_PROTO:-dot}"
+  local primary="${UNLOCK_PRIMARY:-}" backup="${UNLOCK_BACKUP:-}" primary_proto="${UNLOCK_PRIMARY_PROTO:-}" backup_proto="${UNLOCK_BACKUP_PROTO:-}"
   if [[ -z "$primary" && -r /dev/tty ]]; then
-    printf '\n请输入主解锁 DNS（DoH URL、DoT 主机或 DNS IP；留空则稍后配置）：' >/dev/tty
+    printf '\n请输入主解锁 DNS（DoH: https://域名/dns-query；DoT: tls://域名:853；留空则稍后配置）：' >/dev/tty
     IFS= read -r primary </dev/tty || true
   fi
   if [[ -n "$primary" && -z "$backup" && -r /dev/tty ]]; then
-    printf '请输入备用解锁 DNS（可留空）：' >/dev/tty
+    printf '请输入备用解锁 DNS（DoH 或 DoT，可留空）：' >/dev/tty
     IFS= read -r backup </dev/tty || true
   fi
   if [[ -z "$primary" ]]; then
     warn "未填写解锁 DNS，平台暂未启用。之后使用 smartunlock upstream-add 配置。"
     return
   fi
+  primary_proto="$(choose_protocol 主 "$primary" "$primary_proto")"
+  if [[ -n "$backup" ]]; then
+    backup_proto="$(choose_protocol 备用 "$backup" "$backup_proto")"
+  fi
   printf 'default|primary|%s|%s|\n' "$primary_proto" "$primary" > "$ETC_DIR/upstreams.tsv"
   [[ -n "$backup" ]] && printf 'default|backup|%s|%s|\n' "$backup_proto" "$backup" >> "$ETC_DIR/upstreams.tsv"
   jq -r '.platforms[].id + "|default"' "$APP_DIR/config/platforms.json" > "$ETC_DIR/enabled.tsv"
   chmod 0600 "$ETC_DIR/upstreams.tsv" "$ETC_DIR/enabled.tsv"
+}
+
+snapshot_system_dns() {
+  local backup_dir="$1"
+  install -d -m 0700 "$backup_dir"
+  if [[ -L /etc/resolv.conf ]]; then
+    readlink /etc/resolv.conf > "$backup_dir/resolv.conf.symlink"
+    cp -L /etc/resolv.conf "$backup_dir/resolv.conf" 2>/dev/null || true
+  elif [[ -e /etc/resolv.conf ]]; then
+    cp -a /etc/resolv.conf "$backup_dir/resolv.conf"
+  else
+    touch "$backup_dir/resolv.conf.missing"
+  fi
+  systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null && touch "$backup_dir/systemd-resolved.enabled"
+  systemctl is-active --quiet systemd-resolved.service 2>/dev/null && touch "$backup_dir/systemd-resolved.active"
+}
+
+restore_system_dns() {
+  local backup_dir="$WORK_DIR/system-dns-rollback"
+  if [[ -f "$backup_dir/resolv.conf.symlink" ]]; then
+    rm -f /etc/resolv.conf
+    ln -s "$(<"$backup_dir/resolv.conf.symlink")" /etc/resolv.conf
+  elif [[ -f "$backup_dir/resolv.conf" ]]; then
+    rm -f /etc/resolv.conf
+    install -m 0644 "$backup_dir/resolv.conf" /etc/resolv.conf
+  elif [[ -f "$backup_dir/resolv.conf.missing" ]]; then
+    rm -f /etc/resolv.conf
+  fi
+  if [[ -f "$backup_dir/systemd-resolved.enabled" ]]; then
+    systemctl enable systemd-resolved.service >/dev/null 2>&1 || true
+  fi
+  if [[ -f "$backup_dir/systemd-resolved.active" ]]; then
+    systemctl start systemd-resolved.service >/dev/null 2>&1 || true
+  fi
+}
+
+prepare_system_dns() {
+  local original_dir="$ETC_DIR/backups/system-dns-original"
+  snapshot_system_dns "$WORK_DIR/system-dns-rollback"
+  if [[ ! -d "$original_dir" ]]; then
+    snapshot_system_dns "$original_dir"
+  fi
+  DNS_PREPARED=1
+  if systemctl is-active --quiet systemd-resolved.service 2>/dev/null || systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null; then
+    info "停止 systemd-resolved，释放本机 53 端口"
+    systemctl disable --now systemd-resolved.service >/dev/null 2>&1 || die "无法停止 systemd-resolved"
+  fi
+}
+
+configure_system_dns() {
+  info "将 Debian 系统 DNS 指向本机 SmartDNS"
+  rm -f /etc/resolv.conf
+  cat > /etc/resolv.conf <<'EOF'
+# Managed by smartdns-unlock
+nameserver 127.0.0.1
+nameserver ::1
+options timeout:2 attempts:2
+EOF
+  chmod 0644 /etc/resolv.conf
+  if ! dig @127.0.0.1 cloudflare.com A +time=5 +tries=2 +short | grep -q .; then
+    die "本机 SmartDNS 查询失败，系统 DNS 将自动恢复"
+  fi
+  if ! getent ahostsv4 github.com >/dev/null 2>&1; then
+    die "系统 DNS 接管验证失败，原 DNS 将自动恢复"
+  fi
+  DNS_COMMITTED=1
+  info "系统 DNS 已接管，原配置保存在 $ETC_DIR/backups/system-dns-original"
 }
 
 install_services() {
@@ -152,7 +267,9 @@ install_smartdns
 install_project
 write_smartdns_config
 configure_unlock_dns
+prepare_system_dns
 install_services
+configure_system_dns
 
 info "安装完成"
 printf '\n常用命令：\n'
