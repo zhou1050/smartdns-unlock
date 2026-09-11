@@ -1,0 +1,45 @@
+name: Build smartunlock binary
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'go.mod'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'install.sh'
+      - '.github/workflows/build-binary.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: smartunlock-edge-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+      - name: Test
+        run: go test ./...
+      - name: Build static binaries
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-linux-amd64 ./cmd/smartunlock
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-linux-arm64 ./cmd/smartunlock
+          sha256sum dist/smartunlock-linux-* > dist/SHA256SUMS
+      - name: Publish rolling edge release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view edge >/dev/null 2>&1; then
+            gh release create edge --title 'SmartUnlock edge' --notes 'Rolling binaries built from main.' --prerelease
+          fi
+          gh release upload edge dist/smartunlock-linux-amd64 dist/smartunlock-linux-arm64 dist/SHA256SUMS --clobber
