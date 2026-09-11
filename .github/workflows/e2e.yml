@@ -5,10 +5,17 @@ on:
   push:
     branches: [main]
     paths:
+      - 'install.sh'
+      - 'internal/**'
+      - 'cmd/**'
       - '.github/workflows/e2e.yml'
 
 permissions:
   contents: read
+
+concurrency:
+  group: smartunlock-debian-e2e
+  cancel-in-progress: true
 
 jobs:
   e2e:
