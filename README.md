@@ -1,18 +1,18 @@
 # SmartDNS Unlock
 
-Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。普通域名走公共 DNS；需要解锁的平台按规则交给指定的解锁 DNS。项目固定使用 SmartDNS Release 48.4。
+Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务器端改为 **单 Go 二进制 + 单 systemd 服务**：规则同步、DNS 健康检查、平台复检、主备切换和 Telegram 通知都由 `smartunlock` 自己完成。
 
-## 核心功能
+## 功能
 
-- 内置 39 个影视与 AI 平台，可按平台或分类开关。
-- 主 / 备用解锁 DNS，支持 UDP、TCP、DoT、DoH、DoQ、DoH3。
-- **安装时先检测服务器原生解锁能力**：明确原生可用的平台保持本地直出；失败或无法可靠判定的平台自动走解锁 DNS。
-- **每天复检服务器当前最终配置的综合解锁能力**，不会为了复检绕过已经配置的解锁 DNS。
-- 如果主解锁 DNS“能解析但平台仍不解锁”，会单独尝试备用 DNS 的实际平台能力；主备都失败则保留失败状态并 Telegram 报警。
-- 解锁 DNS 网络健康检查、规则每日同步、失败回滚、Telegram 状态通知。
-- 安装前自动备份系统 DNS 和原 SmartDNS 配置；安装验证失败自动恢复系统 DNS。
+- 39 个影视 / AI 平台域名规则。
+- 主、备用解锁 DNS，支持 UDP、TCP、DoT、DoH、DoQ、DoH3。
+- 安装时先检测服务器原生解锁能力，**明确原生可用才保持本地直出**；失败或无法可靠判断的平台默认走解锁 DNS。
+- 每天按服务器当前最终配置做综合解锁复检，不刻意绕过已经配置的解锁 DNS。
+- 主 DNS 网络故障时自动使用备用；主 DNS 虽然能解析但平台实际仍失败时，会实测备用线路，备用可用则该平台切备用。
+- 主备都不能实际解锁时保留失败状态并 Telegram 报警，不伪装成功。
+- 每天自动同步 GitHub 规则；新规则应用失败不会影响已有规则缓存。
 
-> 自动原生优先只采用能够明确判断“可用 / 不可用”的平台探针。无法可靠判断的平台默认走解锁 DNS，避免误判导致平台不可用。
+> 平台“原生优先”只使用程序内能够可靠判断可用性的探针。没有可靠探针的平台不会因为网页能打开就判定为原生解锁，而是保守使用解锁 DNS。
 
 ## 一键安装
 
@@ -20,7 +20,7 @@ Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。普通域名走
 curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/main/install.sh | sudo -E bash
 ```
 
-也可以提前传入参数：
+也可以直接传参数：
 
 ```bash
 UNLOCK_PRIMARY='https://主解锁DNS/dns-query' \
@@ -30,85 +30,98 @@ TG_REPORT_TIME='09:00' \
 bash <(curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/main/install.sh)
 ```
 
-`AUTO_NATIVE_DETECT=0` 可关闭安装时的原生解锁检测。未设置时默认开启。
+安装器优先下载 GitHub `edge` Release 中的静态二进制；如果预编译文件暂时不可用，才使用源码编译兜底。`amd64` / `arm64` 均支持。
 
-## 自动解锁逻辑
+## 自动逻辑
 
-安装时：
+安装时先在服务器原来的 DNS / 网络环境执行一次 `native-scan`，再启动 SmartDNS 并接管系统 DNS。因此原生检测不会被新配置的解锁 DNS 干扰。
 
-1. 先用服务器当前原生网络 / DNS 测试真实平台解锁能力。
-2. 原生明确通过的平台不写入 SmartDNS 解锁规则，优先本地直出。
-3. 原生失败或无法判定的平台自动加入解锁 DNS 分流。
-4. SmartDNS 接管后再次按最终配置做综合复检，并通过 Telegram 汇报结果。
+安装完成后由一个 `smartunlock daemon` 统一负责：
 
-每日复检：
+- `CHECK_INTERVAL`：检查主 / 备用解锁 DNS 网络健康，默认 `5m`。
+- `RULE_UPDATE_TIME`：每天同步规则，默认 `05:17`。
+- `PLATFORM_CHECK_TIME`：每天综合平台复检和自动修复，默认 `06:17`。
+- `TG_REPORT_TIME`：Telegram 日报，默认 `09:00`。
 
-1. 直接测试服务器**当前实际配置**的综合解锁能力。
-2. 原本本地直出的平台失效时，自动切入默认解锁 DNS 并复测。
-3. 已走默认解锁 DNS 但实际平台仍失败时，单独测试备用 DNS；备用能用则该平台自动切到备用线路。
-4. 主、备用都不能解锁时不伪装成功，Telegram 会列出仍未解锁的平台。
+这些任务**不再创建 4 套 systemd timer/service**。
 
 ## 常用命令
 
 ```bash
+smartunlock status
 smartunlock list
+smartunlock check
+smartunlock health-check
+smartunlock update
+
 smartunlock on netflix
+smartunlock on netflix backup
 smartunlock on streaming
 smartunlock on ai
 smartunlock off netflix
-smartunlock upstream-list
-smartunlock status
-smartunlock update
-smartunlock health-check
-smartunlock health-report
-
-# 手动立即执行一次综合平台复检 / 自动修复
-/opt/smartdns-unlock/scripts/auto_unlock.sh daily
 ```
 
-## 安装后的主要文件
+查看服务日志：
+
+```bash
+systemctl status smartunlock --no-pager
+journalctl -u smartunlock -n 100 --no-pager
+```
+
+## 服务器安装后有哪些文件
+
+长期保留的核心文件很少：
 
 | 路径 | 用途 |
 |---|---|
-| `/usr/local/sbin/smartunlock` | 日常管理命令入口 |
-| `/opt/smartdns-unlock/bin/smartunlock` | `smartunlock` 主程序源文件 |
-| `/opt/smartdns-unlock/config/platforms.json` | 平台清单、名称、分类和规则来源 |
-| `/opt/smartdns-unlock/scripts/build_rules.py` | 构建平台域名规则 |
-| `/opt/smartdns-unlock/scripts/check_upstreams.py` | 检测主 / 备用解锁 DNS 网络健康 |
-| `/opt/smartdns-unlock/scripts/platform_check.py` | 判断真实平台是否解锁 |
-| `/opt/smartdns-unlock/scripts/auto_unlock.sh` | 每日综合复检和自动切换逻辑 |
-| `/opt/smartdns-unlock/vendor/region-restriction-check.sh` | 安装时固定版本的平台实际可用性探针 |
-| `/etc/smartdns/smartdns.conf` | SmartDNS 主配置，由本项目管理 |
-| `/etc/smartdns/smartdns.conf.before-smartunlock` | 安装前原 SmartDNS 配置备份（存在原配置时生成） |
-| `/etc/smartdns-unlock/upstreams.tsv` | 解锁 DNS 线路组配置 |
-| `/etc/smartdns-unlock/enabled.tsv` | 当前需要 SmartDNS 解锁的平台及所属线路组 |
-| `/etc/smartdns-unlock/auto-native.tsv` | 安装检测后仍优先本地直出的平台 |
-| `/etc/smartdns-unlock/rules/` | 当前平台域名规则 |
-| `/etc/smartdns-unlock/generated/` | 自动生成并加载到 SmartDNS 的配置 |
-| `/etc/smartdns-unlock/platform-check.json` | 最近一次综合平台检测结果 |
-| `/etc/smartdns-unlock/native-platform-check.json` | 安装时原生解锁检测结果 |
-| `/etc/smartdns-unlock/health.env` | 健康检查和 Telegram 配置，权限 `0600` |
-| `/etc/smartdns-unlock/github.env` | 仓库 / Token 配置，权限 `0600` |
-| `/etc/smartdns-unlock/backups/` | 系统 DNS 和生成配置的备份 / 回滚数据 |
-| `/var/log/smartdns/smartdns.log` | SmartDNS 日志 |
+| `/usr/local/bin/smartunlock` | 单个静态 Go 主程序，约 6 MB；包含调度、检测、切换、TG 和 SmartDNS 配置生成逻辑 |
+| `/etc/smartdns-unlock/config.env` | 主 / 备用 DNS、TG、检测周期和每日时间，权限 `0600` |
+| `/var/lib/smartdns-unlock/state.json` | 当前各平台走原生 / 主 DNS / 备用 DNS的状态及最近检测结果 |
+| `/var/lib/smartdns-unlock/rules.json` | 所有平台域名规则的单文件本地缓存 |
+| `/etc/systemd/system/smartunlock.service` | 唯一的 SmartUnlock systemd 服务 |
+| `/etc/smartdns/smartdns.conf` | 由 `smartunlock` 自动生成的 SmartDNS 主配置 |
+| `/etc/smartdns-unlock/backups/system-dns-original/` | 安装前系统 DNS 备份，仅用于故障恢复 |
+| `/var/log/smartdns/smartdns.log` | SmartDNS 自身日志 |
 
-## 定时任务
+运行时程序会把 `rules.json` 临时展开到：
 
-- `smartunlock-health.timer`：按 `CHECK_INTERVAL` 检查解锁 DNS 网络健康。
-- `smartunlock-update.timer`：每天本机时间 `05:17` 后随机延迟最多 20 分钟同步规则。
-- `smartunlock-platform.timer`：每天本机时间 `06:17` 后随机延迟最多 20 分钟做综合平台解锁复检和自动修复。
-- `smartunlock-report.timer`：按 `TG_REPORT_TIME` 发送 Telegram 日报。
+```text
+/run/smartdns-unlock/
+├── upstreams.conf
+├── platforms.conf
+└── rules/
+```
 
-查看状态：
+`/run` 是临时目录，重启后会重新生成，**不会在服务器长期堆几十个规则文件**。
+
+## 配置文件
+
+`/etc/smartdns-unlock/config.env` 示例：
 
 ```bash
-systemctl list-timers 'smartunlock-*'
-journalctl -u smartunlock-platform.service -n 100 --no-pager
-journalctl -u smartunlock-update.service -n 100 --no-pager
+UNLOCK_PRIMARY_PROTO=doh
+UNLOCK_PRIMARY=https://dns.example.com/dns-query
+UNLOCK_BACKUP_PROTO=dot
+UNLOCK_BACKUP=tls://backup.example.com:853
+CHECK_INTERVAL=5m
+RULE_UPDATE_TIME=05:17
+PLATFORM_CHECK_TIME=06:17
+TG_REPORT_TIME=09:00
+TG_BOT_TOKEN=
+TG_CHAT_ID=
+AUTO_NATIVE_DETECT=true
 ```
+
+改完配置后执行：
+
+```bash
+systemctl kill -s HUP smartunlock
+```
+
+程序会重新读取配置并重建 SmartDNS 运行配置。
 
 ## 说明
 
-DNS 解锁能力最终取决于解锁 DNS 服务商。部分 AI 平台还会校验实际出口 IP、账号地区或支付地区，因此 DNS 分流并不能保证所有账号场景都可用。
+DNS 解锁最终仍取决于解锁 DNS 服务商。部分 AI 平台还会检查实际出口 IP、账号地区或支付地区，因此仅修改 DNS 不一定能解决所有账号场景。
 
-规则主要从 `v2fly/domain-list-community` 构建；平台实际可用性检测使用固定版本的 `1-stream/RegionRestrictionCheck` 探针，避免上游脚本变化直接影响已安装服务器。
+GitHub 仓库中仍会保留 Go 源码、规则构建脚本和测试文件，方便维护；**这些源码不会安装到服务器**。服务器运行端只需要上面列出的二进制、配置、状态和规则缓存。
