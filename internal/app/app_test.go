@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -67,7 +68,8 @@ func startTestDNS(t *testing.T) (string, func()) {
 			_, _ = pc.WriteTo(append(q, ans...), addr)
 		}
 	}()
-	return pc.LocalAddr().String(), func(){ close(done); _ = pc.Close() }
+	var once sync.Once
+	return pc.LocalAddr().String(), func(){ once.Do(func(){ close(done); _ = pc.Close() }) }
 }
 
 func TestCheckDNSListener(t *testing.T) {
