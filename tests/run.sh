@@ -6,6 +6,7 @@ bash -n install.sh bin/smartunlock scripts/auto_unlock.sh tests/smoke_cli.sh tes
 python3 -m py_compile scripts/build_rules.py scripts/check_upstreams.py scripts/platform_check.py
 python3 tests/test_builder.py
 python3 tests/test_health.py
+python3 tests/test_platform_check.py
 
 test_dir="$(mktemp -d)"
 trap 'rm -rf -- "$test_dir"' EXIT
