@@ -101,10 +101,13 @@ func (m *Manager) NativeScan(ctx context.Context) error {
 }
 
 func (m *Manager) HealthCheck(ctx context.Context) (bool, bool, error) {
-	p := CheckEndpoint(ctx, m.Cfg.PrimaryProto, m.Cfg.Primary)
+	p := false
+	if m.Cfg.Primary != "" {
+		p = CheckDNSListener(ctx, m.Cfg.HealthPrimaryAddr)
+	}
 	b := false
 	if m.Cfg.Backup != "" {
-		b = CheckEndpoint(ctx, m.Cfg.BackupProto, m.Cfg.Backup)
+		b = CheckDNSListener(ctx, m.Cfg.HealthBackupAddr)
 	}
 	m.Mu.Lock()
 	oldp, oldb := m.State.PrimaryHealthy, m.State.BackupHealthy
@@ -123,71 +126,142 @@ func (m *Manager) HealthCheck(ctx context.Context) (bool, bool, error) {
 	return p, b, nil
 }
 
+func probeSelected(ctx context.Context, ids []string) map[string]ProbeResult {
+	out := make(map[string]ProbeResult, len(ids))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+	for _, id := range ids {
+		p, ok := PlatformByID(id)
+		if !ok || p.Probe == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(p Platform) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			c, cancel := context.WithTimeout(ctx, 15*time.Second)
+			r := ProbePlatform(c, p)
+			cancel()
+			mu.Lock()
+			out[p.ID] = r
+			mu.Unlock()
+		}(p)
+	}
+	wg.Wait()
+	return out
+}
+
 func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]ProbeResult, error) {
 	checks := ProbeAll(ctx)
 	m.Mu.Lock()
 	m.State.LastChecks = checks
 	m.State.LastPlatformScan = time.Now()
-	changed := false
-	for _, p := range Platforms {
-		r := checks[p.ID]
-		if p.Probe == "" || r.Status != "fail" {
-			continue
-		}
-		route := m.State.Routes[p.ID]
-		if repair && route == "native" && m.Cfg.Primary != "" {
-			m.State.Routes[p.ID] = "primary"
-			changed = true
-		}
-	}
 	if e := SaveState(m.Cfg.StatePath, m.State); e != nil {
 		m.Mu.Unlock()
 		return checks, e
 	}
 	m.Mu.Unlock()
-	if changed {
+	if !repair {
+		return checks, nil
+	}
+
+	// Native routes are changed only after a second targeted failure, reducing
+	// false switches caused by one transient website error.
+	var nativeSuspects []string
+	m.Mu.Lock()
+	for _, p := range Platforms {
+		if p.Probe != "" && checks[p.ID].Status == "fail" && m.State.Routes[p.ID] == "native" && m.Cfg.Primary != "" {
+			nativeSuspects = append(nativeSuspects, p.ID)
+		}
+	}
+	m.Mu.Unlock()
+	if len(nativeSuspects) > 0 {
+		confirmed := probeSelected(ctx, nativeSuspects)
+		changed := false
+		m.Mu.Lock()
+		for _, id := range nativeSuspects {
+			if r, ok := confirmed[id]; ok {
+				checks[id] = r
+				if r.Status == "fail" && m.State.Routes[id] == "native" {
+					m.State.Routes[id] = "primary"
+					changed = true
+				}
+			}
+		}
+		_ = SaveState(m.Cfg.StatePath, m.State)
+		m.Mu.Unlock()
+		if changed {
+			if e := m.Apply(true); e != nil {
+				return checks, e
+			}
+			time.Sleep(1500 * time.Millisecond)
+			for id, r := range probeSelected(ctx, nativeSuspects) {
+				checks[id] = r
+			}
+		}
+	}
+
+	// Test all currently failing primary/backup routes on the opposite line in
+	// one batch. This turns O(platforms) SmartDNS restarts into at most two.
+	original := map[string]string{}
+	var candidates []string
+	m.Mu.Lock()
+	for _, p := range Platforms {
+		if p.Probe == "" || checks[p.ID].Status != "fail" {
+			continue
+		}
+		route := m.State.Routes[p.ID]
+		candidate := ""
+		if route == "primary" && m.Cfg.Backup != "" {
+			candidate = "backup"
+		} else if route == "backup" && m.Cfg.Primary != "" {
+			candidate = "primary"
+		}
+		if candidate == "" {
+			continue
+		}
+		original[p.ID] = route
+		m.State.Routes[p.ID] = candidate
+		candidates = append(candidates, p.ID)
+	}
+	if len(candidates) > 0 {
+		_ = SaveState(m.Cfg.StatePath, m.State)
+	}
+	m.Mu.Unlock()
+
+	if len(candidates) > 0 {
 		if e := m.Apply(true); e != nil {
 			return checks, e
 		}
-		time.Sleep(2 * time.Second)
-		checks = ProbeAll(ctx)
-	}
-	if repair && m.Cfg.Backup != "" {
-		for _, p := range Platforms {
-			if p.Probe == "" || checks[p.ID].Status != "fail" {
-				continue
+		time.Sleep(1500 * time.Millisecond)
+		alts := probeSelected(ctx, candidates)
+		restored := false
+		m.Mu.Lock()
+		for _, id := range candidates {
+			if r, ok := alts[id]; ok {
+				checks[id] = r
+				if r.Status == "pass" {
+					continue
+				}
 			}
-			m.Mu.Lock()
-			route := m.State.Routes[p.ID]
-			m.Mu.Unlock()
-			if route != "primary" && route != "backup" {
-				continue
+			m.State.Routes[id] = original[id]
+			restored = true
+		}
+		_ = SaveState(m.Cfg.StatePath, m.State)
+		m.Mu.Unlock()
+		if restored {
+			if e := m.Apply(true); e != nil {
+				return checks, e
 			}
-			candidate := "backup"
-			if route == "backup" {
-				candidate = "primary"
-			}
-			m.Mu.Lock()
-			m.State.Routes[p.ID] = candidate
-			_ = SaveState(m.Cfg.StatePath, m.State)
-			m.Mu.Unlock()
-			_ = m.Apply(true)
-			time.Sleep(1200 * time.Millisecond)
-			pp, _ := PlatformByID(p.ID)
-			c, cancel := context.WithTimeout(ctx, 15*time.Second)
-			pr := ProbePlatform(c, pp)
-			cancel()
-			if pr.Status == "pass" {
-				checks[p.ID] = pr
-				continue
-			}
-			m.Mu.Lock()
-			m.State.Routes[p.ID] = route
-			_ = SaveState(m.Cfg.StatePath, m.State)
-			m.Mu.Unlock()
-			_ = m.Apply(true)
 		}
 	}
+
 	m.Mu.Lock()
 	m.State.LastChecks = checks
 	_ = SaveState(m.Cfg.StatePath, m.State)
