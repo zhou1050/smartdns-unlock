@@ -83,6 +83,9 @@ func Render(cfg Config, s State, rules RulesFile) error {
 		if group == "primary" && !s.PrimaryHealthy && s.BackupHealthy && cfg.Backup != "" {
 			group = "backup"
 		}
+		if group == "backup" && !s.BackupHealthy && s.PrimaryHealthy && cfg.Primary != "" {
+			group = "primary"
+		}
 		if group == "backup" && cfg.Backup == "" {
 			group = "primary"
 		}
