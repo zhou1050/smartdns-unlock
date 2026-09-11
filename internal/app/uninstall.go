@@ -143,14 +143,24 @@ func restoreOrRemoveSmartDNS(cfg Config) error {
 			_ = os.Remove(cfg.SmartDNSConf)
 		}
 		runSystemctl("daemon-reload")
+		return nil
 	}
-	return nil
+
+	legacy := "/etc/smartdns/smartdns.conf.before-smartunlock"
+	if marker(legacy) {
+		if err := copyFile(legacy, cfg.SmartDNSConf, 0640); err != nil {
+			return fmt.Errorf("恢复旧版 SmartDNS 配置备份: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("未找到 SmartDNS 安装来源备份，为避免误删，SmartDNS 程序本身已保留")
 }
 
 // Uninstall removes SmartUnlock and restores the DNS/SmartDNS state captured by install.sh.
 // It is intentionally conservative when a backup is missing.
 func Uninstall(cfg Config) []error {
 	var warnings []error
+	installedByUs := marker(filepath.Join(backupRoot, "smartdns-original", "installed-by-smartunlock"))
 	runSystemctl("disable", "--now", cfg.ServiceName)
 
 	if err := restoreSystemDNS(); err != nil {
@@ -164,8 +174,10 @@ func Uninstall(cfg Config) []error {
 	runSystemctl("daemon-reload")
 	_ = os.RemoveAll(cfg.RuntimeDir)
 	_ = os.RemoveAll(filepath.Dir(cfg.StatePath))
-	_ = os.RemoveAll("/var/cache/smartdns")
-	_ = os.RemoveAll("/var/log/smartdns")
+	if installedByUs {
+		_ = os.RemoveAll("/var/cache/smartdns")
+		_ = os.RemoveAll("/var/log/smartdns")
+	}
 	_ = os.RemoveAll("/etc/smartdns-unlock")
 	_ = os.Remove("/usr/local/bin/smartunlock")
 	return warnings
