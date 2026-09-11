@@ -1,0 +1,9 @@
+[Unit]
+Description=Check and repair SmartDNS platform unlock capability
+After=network-online.target smartdns-unlock.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/smartdns-unlock/scripts/auto_unlock.sh daily
+Nice=10
