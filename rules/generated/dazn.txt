@@ -1,0 +1,3 @@
+dazn-api.com
+dazn.com
+daznservices.com

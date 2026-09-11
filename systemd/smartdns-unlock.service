@@ -1,0 +1,14 @@
+[Unit]
+Description=SmartDNS Unlock DNS Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@SMARTDNS_BIN@ -f -x -c /etc/smartdns/smartdns.conf
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

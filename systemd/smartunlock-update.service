@@ -1,0 +1,9 @@
+[Unit]
+Description=Update SmartDNS Unlock rules
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smartunlock update
+Nice=10

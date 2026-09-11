@@ -1,0 +1,38 @@
+name: Update platform rules
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 19 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-platform-rules
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build rules
+        run: python3 scripts/build_rules.py
+      - name: Validate project
+        run: bash tests/run.sh
+      - name: Commit changed rules
+        run: |
+          if git diff --quiet -- rules/generated; then
+            echo 'Rules unchanged.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rules/generated
+          git commit -m 'chore: update platform rules'
+          git push

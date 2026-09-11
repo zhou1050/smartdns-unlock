@@ -1,0 +1,200 @@
+{
+  "schema": 1,
+  "platforms": {
+    "netflix": {
+      "count": 8,
+      "sha256": "07688e8f63d567a6530017f395bcab4bd366e6703c317f65f96ec1ab9e5ff963",
+      "warnings": []
+    },
+    "disney": {
+      "count": 4,
+      "sha256": "2b23c94644de2c4227209a7d31fbf1c5e8cc14927658c04da9fc6d213801bc47",
+      "warnings": []
+    },
+    "youtube": {
+      "count": 5,
+      "sha256": "29e5fe9939fa88a3d9fd50c6d3749c6d98ceb6cab8449d385f9f39f3ca3758d3",
+      "warnings": []
+    },
+    "primevideo": {
+      "count": 4,
+      "sha256": "b0ebfbd25cca2b25a3e82cfb72c7bf59442301b060ad3b3f4bef8914c73eea1a",
+      "warnings": []
+    },
+    "max": {
+      "count": 4,
+      "sha256": "210124a75530dd3197d2668b1d70432edaccdfd930500b56635a94cdcafc8297",
+      "warnings": []
+    },
+    "hulu": {
+      "count": 3,
+      "sha256": "a20ce06adcfc7713eb711a200b93c12d26ec9b26b919a0c270c832fc5c7dbf10",
+      "warnings": []
+    },
+    "appletv": {
+      "count": 3,
+      "sha256": "d2d843396f49dd2e8ca0843c2122509b0d519d8668534065f3e07de6bcb946f1",
+      "warnings": []
+    },
+    "spotify": {
+      "count": 3,
+      "sha256": "96640d2d5fad9f0ca0e561979eaec190a4e8c07ffd59f9044d916b516bf94d17",
+      "warnings": []
+    },
+    "tiktok": {
+      "count": 4,
+      "sha256": "6ff5c5816cc83d02c9c26776fbc5395b38a6c824043a1ea188005fac8ca5b494",
+      "warnings": []
+    },
+    "dazn": {
+      "count": 3,
+      "sha256": "c9416dab8dd1bd4e0c314fc168f4a2d61697daaf22f035255512fb30ec98f3c7",
+      "warnings": []
+    },
+    "bbciplayer": {
+      "count": 4,
+      "sha256": "acf54ebe67c5143e2329e0c3eb7233ff35611bf87451c27ea5959b7351058c85",
+      "warnings": []
+    },
+    "paramount": {
+      "count": 3,
+      "sha256": "c9959e30957ac684fc982a9b817d4c0c33cc97a72795a8a63ca9fbc608844c65",
+      "warnings": []
+    },
+    "peacock": {
+      "count": 2,
+      "sha256": "b51b8717cba170261cb9b5e3dfe9e19d6d1be6b84b53f72cf903512409032295",
+      "warnings": []
+    },
+    "crunchyroll": {
+      "count": 2,
+      "sha256": "c2e845289930fe5daaa0a9a7c37cf55f8b4b8d5d59d3cdc22729ec20b1ee29d0",
+      "warnings": []
+    },
+    "abema": {
+      "count": 3,
+      "sha256": "ea0161fa3428daac15f05c76851e8912c961bd5c35ca031d0e7ebd8bf39a93fc",
+      "warnings": []
+    },
+    "bahamut": {
+      "count": 2,
+      "sha256": "44f9454593945ee5489595db86d655ef97be3a17ffef3c1ee587b44beebc46ba",
+      "warnings": []
+    },
+    "bilibili": {
+      "count": 4,
+      "sha256": "6feb5c4a0a260513c5dd77d9c500607d7b023e2d5d7eca449d0baaf883e8c3ec",
+      "warnings": []
+    },
+    "iqiyi": {
+      "count": 3,
+      "sha256": "e99d9fe7b1d20f16ed0ab0a40b545753663152b48122b44ed72a627549dea582",
+      "warnings": []
+    },
+    "viu": {
+      "count": 2,
+      "sha256": "0be68a4ec3e9df3506e884485f9bb441d0ea160b28f6f132e8a058bc963520f4",
+      "warnings": []
+    },
+    "tvb": {
+      "count": 3,
+      "sha256": "b21734041075717fa8a98d4f3a43cc5e4ab4c6806029d48e713dacd1f64bd887",
+      "warnings": []
+    },
+    "openai": {
+      "count": 4,
+      "sha256": "83e0fbbce06af5c715f347960e01f755dbd669248640589e5690e843e79b625a",
+      "warnings": []
+    },
+    "claude": {
+      "count": 3,
+      "sha256": "c2ce2a0b4fd7fd4e4cbc993bb7bc7b11966286b6fad5aba2ba9155bb657a1bf9",
+      "warnings": []
+    },
+    "gemini": {
+      "count": 3,
+      "sha256": "0150125c1111024457e5a85ef2873c519785e98a5fd72423e7548333d763d4a0",
+      "warnings": []
+    },
+    "githubcopilot": {
+      "count": 3,
+      "sha256": "50b76b61a55b5c183ff31b4bcbe1f538d8e58719079b9b3418a94e71ddbb960c",
+      "warnings": []
+    },
+    "microsoftcopilot": {
+      "count": 3,
+      "sha256": "ccba26415bdfa915a5a0b3c635eefdf617e4cc9cfbe9de0243ac4f9a6aa68c0c",
+      "warnings": []
+    },
+    "perplexity": {
+      "count": 2,
+      "sha256": "44bc9ea6c598fd3857196e9fa2aab512a32db37608af0b9c2fcf3051500da736",
+      "warnings": []
+    },
+    "grok": {
+      "count": 3,
+      "sha256": "1d2ec74d12581b146be42fca92ef0b1bddb72d6ec9c0a3f72e8d89427fe20200",
+      "warnings": []
+    },
+    "poe": {
+      "count": 2,
+      "sha256": "3972a4d93153e040bc969cdc75616707a7fa2e7c51b6a5a43faa77843f077867",
+      "warnings": []
+    },
+    "midjourney": {
+      "count": 2,
+      "sha256": "789788903ff3a239ef5d85f830363e770742dd9038d64d46e0f8790dc20e6a3e",
+      "warnings": []
+    },
+    "suno": {
+      "count": 2,
+      "sha256": "1dadbd5cc21e582b32ce8111ed342ba383a54a9c6f93469cab1bbb8073b241c3",
+      "warnings": []
+    },
+    "deepseek": {
+      "count": 2,
+      "sha256": "56af9b35e13977e44500e9195097e8b58d67b0de2437520d6673fd5170eb0552",
+      "warnings": []
+    },
+    "cursor": {
+      "count": 3,
+      "sha256": "3411352f6a0a1e43b1a40d2a60411165ac84bec9b4cc40298f503d1f849784b6",
+      "warnings": []
+    },
+    "canva": {
+      "count": 2,
+      "sha256": "e35acbc3afe7db7fc521614c4f7d0dbcfcb3d699359ec0816ad80caf3bf5b4c0",
+      "warnings": []
+    },
+    "notion": {
+      "count": 3,
+      "sha256": "57d2e8060c663a6dc6f30bd650452aeea58997911c899c8dafc99cb7ab6fcd6c",
+      "warnings": []
+    },
+    "characterai": {
+      "count": 2,
+      "sha256": "a9e0dbd3fbf9749f9531a2d2548c375f5912abbe5fe5ea964c9af44174f81cb6",
+      "warnings": []
+    },
+    "runway": {
+      "count": 2,
+      "sha256": "1ae0e63acda023edfe9256fe63e104e4616e63cc89967f87a9157811d83da4ea",
+      "warnings": []
+    },
+    "mistral": {
+      "count": 2,
+      "sha256": "af489c9732749fe73da8af5485469286d51aa48c33e45be4dbf0a236683c6a0b",
+      "warnings": []
+    },
+    "huggingface": {
+      "count": 2,
+      "sha256": "aff39fa05ee6ce980ba6f3abe42195ce3fe0be716cd2b38ea9e00965bcf8bb2d",
+      "warnings": []
+    },
+    "openrouter": {
+      "count": 1,
+      "sha256": "b4ccb61a4281b2e58758bd75942c95f044559934f58c1bf9bc15a830f8daffc9",
+      "warnings": []
+    }
+  }
+}

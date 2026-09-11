@@ -1,0 +1,3 @@
+aistudio.google.com
+gemini.google.com
+generativelanguage.googleapis.com

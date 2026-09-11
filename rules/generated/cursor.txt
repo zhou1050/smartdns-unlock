@@ -1,0 +1,3 @@
+cursor.com
+cursor.sh
+cursorapi.com
