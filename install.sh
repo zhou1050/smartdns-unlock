@@ -8,6 +8,14 @@ TOKEN="${GITHUB_TOKEN:-}"
 APP_DIR="/opt/smartdns-unlock"
 ETC_DIR="/etc/smartdns-unlock"
 SMARTDNS_DIR="/etc/smartdns"
+CHECK_INTERVAL="${CHECK_INTERVAL:-5m}"
+HEALTH_FAIL_THRESHOLD="${HEALTH_FAIL_THRESHOLD:-3}"
+HEALTH_RECOVER_THRESHOLD="${HEALTH_RECOVER_THRESHOLD:-3}"
+HEALTH_COOLDOWN_SECONDS="${HEALTH_COOLDOWN_SECONDS:-300}"
+TGBOT_CONFIG="${TGBOT:-}"
+TG_BOT_TOKEN="${TG_BOT_TOKEN:-}"
+TG_CHAT_ID="${TG_CHAT_ID:-}"
+TG_REPORT_TIME="${TG_REPORT_TIME:-09:00}"
 DNS_PREPARED=0
 DNS_COMMITTED=0
 
@@ -21,6 +29,20 @@ die() { printf '\033[1;31m[失败]\033[0m %s\n' "$*" >&2; exit 1; }
 source /etc/os-release
 [[ "${ID:-}" == debian ]] || die "当前安装器仅支持 Debian"
 [[ "$REPOSITORY" == */* ]] || die "请设置 SMARTUNLOCK_REPOSITORY=GitHub用户名/smartdns-unlock"
+[[ "$CHECK_INTERVAL" =~ ^[1-9][0-9]*(s|m|min|h)$ ]] || die "检测周期格式错误，例如：30s、5m、10min、1h"
+[[ "$HEALTH_FAIL_THRESHOLD" =~ ^[1-9][0-9]*$ ]] || die "连续失败阈值必须是正整数"
+[[ "$HEALTH_RECOVER_THRESHOLD" =~ ^[1-9][0-9]*$ ]] || die "连续恢复阈值必须是正整数"
+[[ "$HEALTH_COOLDOWN_SECONDS" =~ ^[0-9]+$ ]] || die "恢复冷却时间必须是秒数"
+[[ "$TG_REPORT_TIME" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "Telegram 每日报告时间格式错误，例如：09:00"
+if [[ -n "$TGBOT_CONFIG" && ( -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ) ]]; then
+  [[ "$TGBOT_CONFIG" == *'|'* ]] || die "TGBOT 格式应为 'BOT_TOKEN|CHAT_ID'"
+  TG_BOT_TOKEN="${TGBOT_CONFIG%%|*}"
+  TG_CHAT_ID="${TGBOT_CONFIG#*|}"
+fi
+if [[ -n "$TG_BOT_TOKEN" || -n "$TG_CHAT_ID" ]]; then
+  [[ "$TG_BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]] || die "Telegram Bot Token 格式错误"
+  [[ "$TG_CHAT_ID" =~ ^(-?[0-9]+|@[A-Za-z0-9_]+)$ ]] || die "Telegram Chat ID 格式错误"
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -77,6 +99,7 @@ install_project() {
   install -d -m 0755 "$APP_DIR/bin" "$APP_DIR/config" "$APP_DIR/scripts" "$ETC_DIR/rules" "$ETC_DIR/generated" "$ETC_DIR/backups" /var/cache/smartdns /var/log/smartdns
   install -m 0755 "$WORK_DIR/project/bin/smartunlock" "$APP_DIR/bin/smartunlock"
   install -m 0755 "$WORK_DIR/project/scripts/build_rules.py" "$APP_DIR/scripts/build_rules.py"
+  install -m 0755 "$WORK_DIR/project/scripts/check_upstreams.py" "$APP_DIR/scripts/check_upstreams.py"
   install -m 0644 "$WORK_DIR/project/config/platforms.json" "$APP_DIR/config/platforms.json"
   if find "$WORK_DIR/project/rules/generated" -maxdepth 1 -name '*.txt' -type f -size +0c | grep -q .; then
     cp -a "$WORK_DIR/project/rules/generated/." "$ETC_DIR/rules/"
@@ -90,6 +113,9 @@ install_project() {
   install -m 0755 "$APP_DIR/bin/smartunlock" /usr/local/sbin/smartunlock
   printf 'SMARTUNLOCK_REPOSITORY=%q\nGITHUB_TOKEN=%q\n' "$REPOSITORY" "$TOKEN" > "$ETC_DIR/github.env"
   chmod 0600 "$ETC_DIR/github.env"
+  printf 'CHECK_INTERVAL=%q\nHEALTH_FAIL_THRESHOLD=%q\nHEALTH_RECOVER_THRESHOLD=%q\nHEALTH_COOLDOWN_SECONDS=%q\nTG_BOT_TOKEN=%q\nTG_CHAT_ID=%q\nTG_REPORT_TIME=%q\n' \
+    "$CHECK_INTERVAL" "$HEALTH_FAIL_THRESHOLD" "$HEALTH_RECOVER_THRESHOLD" "$HEALTH_COOLDOWN_SECONDS" "$TG_BOT_TOKEN" "$TG_CHAT_ID" "$TG_REPORT_TIME" > "$ETC_DIR/health.env"
+  chmod 0600 "$ETC_DIR/health.env"
   touch "$ETC_DIR/enabled.tsv" "$ETC_DIR/upstreams.tsv"
   chmod 0600 "$ETC_DIR/enabled.tsv" "$ETC_DIR/upstreams.tsv"
 }
@@ -255,11 +281,15 @@ install_services() {
   sed "s|@SMARTDNS_BIN@|$smartdns_bin|g" "$WORK_DIR/project/systemd/smartdns-unlock.service" > /etc/systemd/system/smartdns-unlock.service
   install -m 0644 "$WORK_DIR/project/systemd/smartunlock-update.service" /etc/systemd/system/smartunlock-update.service
   install -m 0644 "$WORK_DIR/project/systemd/smartunlock-update.timer" /etc/systemd/system/smartunlock-update.timer
+  install -m 0644 "$WORK_DIR/project/systemd/smartunlock-health.service" /etc/systemd/system/smartunlock-health.service
+  sed "s|@CHECK_INTERVAL@|$CHECK_INTERVAL|g" "$WORK_DIR/project/systemd/smartunlock-health.timer" > /etc/systemd/system/smartunlock-health.timer
+  install -m 0644 "$WORK_DIR/project/systemd/smartunlock-report.service" /etc/systemd/system/smartunlock-report.service
+  sed "s|@TG_REPORT_TIME@|$TG_REPORT_TIME|g" "$WORK_DIR/project/systemd/smartunlock-report.timer" > /etc/systemd/system/smartunlock-report.timer
   systemctl disable --now smartdns.service 2>/dev/null || true
   systemctl daemon-reload
-  systemctl enable smartdns-unlock.service smartunlock-update.timer >/dev/null
+  systemctl enable smartdns-unlock.service smartunlock-update.timer smartunlock-health.timer smartunlock-report.timer >/dev/null
   /usr/local/sbin/smartunlock apply
-  systemctl start smartunlock-update.timer
+  systemctl start smartunlock-update.timer smartunlock-health.timer smartunlock-report.timer
 }
 
 download_project
@@ -270,6 +300,7 @@ configure_unlock_dns
 prepare_system_dns
 install_services
 configure_system_dns
+/usr/local/sbin/smartunlock health-report
 
 info "安装完成"
 printf '\n常用命令：\n'
@@ -278,3 +309,5 @@ printf '  smartunlock on streaming\n'
 printf '  smartunlock on ai\n'
 printf '  smartunlock off netflix\n'
 printf '  smartunlock status\n'
+printf '  smartunlock health-check\n'
+printf '  smartunlock health-report\n'

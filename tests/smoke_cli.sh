@@ -27,6 +27,13 @@ grep -Fq 'server-https https://primary.example/dns-query -group unlock_default -
 grep -Fq 'server-tls tls://backup.example:853 -group unlock_default -exclude-default-group -fallback' "$test_dir/etc/generated/upstreams.conf"
 grep -Fq 'domain-set -name su_netflix' "$test_dir/etc/generated/platforms.conf"
 grep -Fq -- '-speed-check-mode none' "$test_dir/etc/generated/platforms.conf"
+printf 'default\n' > "$test_dir/etc/public-fallback.groups"
+run_cli apply
+! grep -Fq -- '-nameserver unlock_default' "$test_dir/etc/generated/platforms.conf"
+grep -Fq '临时使用公共默认 DNS' "$test_dir/etc/generated/platforms.conf"
+rm -f "$test_dir/etc/public-fallback.groups"
+run_cli apply
+grep -Fq -- '-nameserver unlock_default' "$test_dir/etc/generated/platforms.conf"
 run_cli off netflix
 ! grep -Fq 'su_netflix' "$test_dir/etc/generated/platforms.conf"
 echo 'CLI smoke test OK'

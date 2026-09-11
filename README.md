@@ -23,6 +23,14 @@ curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/main/insta
 
 安装器会自动安装 SmartDNS Release 48.4、备份原 DNS 配置、接管系统 DNS，并引导填写主、备用解锁 DNS 以及各自的 DoH/DoT 协议。SmartDNS 默认只监听本机回环地址；命中启用平台列表的域名走解锁 DNS，其他域名走 Cloudflare 和 Google DoH。
 
+也可以用一行参数直接安装。`CHECK_INTERVAL` 是检测周期，`TGBOT` 格式为 `BOT_TOKEN|CHAT_ID`，`TG_REPORT_TIME` 是服务器本地时间的每日报告时间：
+
+```bash
+UNLOCK_PRIMARY='https://主解锁DNS/dns-query' UNLOCK_BACKUP='tls://备用解锁DNS:853' CHECK_INTERVAL='5m' TGBOT='BOT_TOKEN|CHAT_ID' TG_REPORT_TIME='09:00' bash <(curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/main/install.sh)
+```
+
+每次检测会对每条解锁 DNS 连续尝试两次。只有一个上游组连续 3 个周期全部失败，才会让该组平台临时改走公共 DNS；连续恢复 3 个周期且满足 300 秒冷却时间后，才恢复解锁分流。状态切换会即时发送 Telegram 通知，每天还会汇报一次服务、系统 DNS、主备上游、启用平台和规则更新时间。
+
 ## 私有仓库安装
 
 私有仓库无法匿名下载。建议创建一个只允许读取本仓库 `Contents` 的 Fine-grained personal access token。不要使用拥有全部仓库写权限的经典 Token。

@@ -3,7 +3,9 @@ set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
 bash -n install.sh bin/smartunlock tests/smoke_cli.sh tests/fake-bin/systemctl
+python3 -m py_compile scripts/build_rules.py scripts/check_upstreams.py
 python3 tests/test_builder.py
+python3 tests/test_health.py
 
 test_dir="$(mktemp -d)"
 trap 'rm -rf -- "$test_dir"' EXIT

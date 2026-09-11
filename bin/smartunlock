@@ -10,6 +10,9 @@ ENABLED_FILE="$ETC_DIR/enabled.tsv"
 REGISTRY_FILE="$APP_DIR/config/platforms.json"
 RULE_DIR="$ETC_DIR/rules"
 GENERATED_DIR="$ETC_DIR/generated"
+HEALTH_ENV="$ETC_DIR/health.env"
+HEALTH_STATE="$ETC_DIR/health-state.json"
+FALLBACK_GROUPS="$ETC_DIR/public-fallback.groups"
 
 die() { printf '错误：%s\n' "$*" >&2; exit 1; }
 info() { printf '[smartunlock] %s\n' "$*"; }
@@ -61,15 +64,25 @@ render() {
       [[ -s "$file" ]] || die "平台 $platform 的规则文件不存在或为空"
       set_name="su_${platform//-/_}"
       printf 'domain-set -name %s -file %s\n' "$set_name" "$file"
-      printf 'domain-rules /domain-set:%s/ -nameserver unlock_%s -speed-check-mode none -response-mode fastest-response\n' "$set_name" "$group"
+      if [[ -f "$FALLBACK_GROUPS" ]] && grep -Fqx "$group" "$FALLBACK_GROUPS"; then
+        printf '# %s: 解锁 DNS 连续失败，临时使用公共默认 DNS\n' "$platform"
+      else
+        printf 'domain-rules /domain-set:%s/ -nameserver unlock_%s -speed-check-mode none -response-mode fastest-response\n' "$set_name" "$group"
+      fi
     done < "$ENABLED_FILE"
   } > "$stage/platforms.conf"
+  if [[ -f "$FALLBACK_GROUPS" ]]; then
+    cp "$FALLBACK_GROUPS" "$stage/health-fallback.groups"
+  else
+    : > "$stage/health-fallback.groups"
+  fi
 
   backup="$ETC_DIR/backups/$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$backup"
   cp -a "$GENERATED_DIR/." "$backup/" 2>/dev/null || true
   install -m 0644 "$stage/upstreams.conf" "$GENERATED_DIR/upstreams.conf"
   install -m 0644 "$stage/platforms.conf" "$GENERATED_DIR/platforms.conf"
+  install -m 0644 "$stage/health-fallback.groups" "$GENERATED_DIR/health-fallback.groups"
 
   if command -v systemctl >/dev/null && systemctl restart "$SERVICE_NAME"; then
     rm -rf -- "$stage"
@@ -80,6 +93,75 @@ render() {
     rm -rf -- "$stage"
     die "SmartDNS 启动失败，已回滚；请执行 journalctl -u $SERVICE_NAME -n 80"
   fi
+}
+
+notify_telegram() {
+  local message="$1" config
+  [[ -r "$HEALTH_ENV" ]] || return 0
+  # shellcheck disable=SC1090
+  source "$HEALTH_ENV"
+  [[ -n "${TG_BOT_TOKEN:-}" && -n "${TG_CHAT_ID:-}" ]] || return 0
+  config="$(mktemp "$ETC_DIR/.telegram.XXXXXX")"
+  chmod 0600 "$config"
+  printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TG_BOT_TOKEN" > "$config"
+  if ! curl -fsS --retry 2 --max-time 15 --config "$config" \
+    --data-urlencode "chat_id=$TG_CHAT_ID" \
+    --data-urlencode "text=$message" >/dev/null; then
+    info "Telegram 通知发送失败，不影响 DNS 服务"
+  fi
+  rm -f "$config"
+}
+
+cmd_health_check() {
+  need_root
+  [[ -r "$HEALTH_ENV" ]] || die "缺少 $HEALTH_ENV"
+  # shellcheck disable=SC1090
+  source "$HEALTH_ENV"
+  local result transitions message
+  result="$(python3 "$APP_DIR/scripts/check_upstreams.py" \
+    --upstreams "$UPSTREAM_FILE" \
+    --state "$HEALTH_STATE" \
+    --fallback-groups "$FALLBACK_GROUPS" \
+    --fail-threshold "${HEALTH_FAIL_THRESHOLD:-3}" \
+    --recover-threshold "${HEALTH_RECOVER_THRESHOLD:-3}" \
+    --cooldown "${HEALTH_COOLDOWN_SECONDS:-300}")"
+
+  jq -r '.groups | to_entries[] | "[健康检测] \(.key)：\(if .value.healthy then "至少一条解锁 DNS 正常" else "主备解锁 DNS 均失败" end)，模式=\(.value.mode)"' <<<"$result"
+
+  if ! cmp -s "$FALLBACK_GROUPS" "$GENERATED_DIR/health-fallback.groups" 2>/dev/null; then
+    render
+  fi
+
+  transitions="$(jq '.transitions | length' <<<"$result")"
+  if [[ "$transitions" -gt 0 ]]; then
+    message="$(jq -r '.transitions[] | if .mode == "public" then "⚠️ SmartDNS：上游组 \(.group) 主备解锁 DNS 连续失败，已切换公共 DNS 兜底。" else "✅ SmartDNS：上游组 \(.group) 解锁 DNS 已稳定恢复，已恢复解锁分流。" end' <<<"$result")"
+    notify_telegram "$message"
+  fi
+}
+
+cmd_health_report() {
+  need_root
+  cmd_health_check
+  local host service_state resolver_state enabled_count rule_time health_lines message
+  host="$(hostname 2>/dev/null || printf 'unknown')"
+  service_state="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+  if grep -Eq '^nameserver[[:space:]]+(127\.0\.0\.1|::1)([[:space:]]|$)' /etc/resolv.conf 2>/dev/null; then
+    resolver_state='已接管'
+  else
+    resolver_state='未指向本机'
+  fi
+  enabled_count="$(grep -c '^[^#[:space:]]' "$ENABLED_FILE" 2>/dev/null || true)"
+  rule_time="$(stat -c '%y' "$RULE_DIR/manifest.json" 2>/dev/null | cut -d. -f1 || printf '未知')"
+  health_lines="$(jq -r '.groups | to_entries[] | .key as $group | .value as $value | "组 \($group)：\(if $value.mode == "public" then "公共DNS兜底" else "解锁分流" end)\n" + ($value.probes | map("  \(.priority)：\(if .ok then "正常 \(.latency_ms)ms" else "故障" end)") | join("\n"))' "$HEALTH_STATE" 2>/dev/null || printf '暂无上游检测数据')"
+  message="📊 SmartDNS 每日报告
+主机：$host
+服务：$service_state
+系统DNS：$resolver_state
+启用平台：$enabled_count
+规则时间：$rule_time
+$health_lines"
+  notify_telegram "$message"
+  info "Telegram 每日报告已处理"
 }
 
 cmd_list() {
@@ -210,6 +292,11 @@ cmd_status() {
   printf '\n已启用平台：%s\n' "$(grep -c '^[^#[:space:]]' "$ENABLED_FILE" || true)"
   printf '规则更新时间：'
   stat -c '%y' "$RULE_DIR/manifest.json" 2>/dev/null || printf '未知\n'
+  if [[ -s "$FALLBACK_GROUPS" ]]; then
+    printf '公共 DNS 兜底组：%s\n' "$(paste -sd, "$FALLBACK_GROUPS")"
+  else
+    printf '公共 DNS 兜底组：无\n'
+  fi
 }
 
 usage() {
@@ -225,6 +312,8 @@ SmartDNS Unlock 控制命令
   smartunlock upstream-list
   smartunlock apply
   smartunlock update
+  smartunlock health-check
+  smartunlock health-report
   smartunlock status
 EOF
 }
@@ -240,6 +329,8 @@ main() {
     upstream-list) cmd_upstream_list "$@" ;;
     apply) lock_and_run render ;;
     update) lock_and_run cmd_update ;;
+    health-check) lock_and_run cmd_health_check ;;
+    health-report) lock_and_run cmd_health_report ;;
     status) cmd_status ;;
     help|-h|--help) usage ;;
     *) usage; die "未知命令：$command" ;;

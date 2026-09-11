@@ -1,0 +1,10 @@
+[Unit]
+Description=Send daily SmartDNS unlock health report
+After=network-online.target smartdns-unlock.service
+Wants=network-online.target
+Requires=smartdns-unlock.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smartunlock health-report
+Nice=10
