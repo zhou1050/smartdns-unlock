@@ -53,12 +53,48 @@ trap cleanup EXIT
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl tar gzip build-essential libssl-dev dnsutils >/dev/null
+install -d -m 0755 "$CONFIG_DIR" "$STATE_DIR"
 
 case "$(uname -m)" in
   x86_64|amd64) ARCH=amd64 ;;
   aarch64|arm64) ARCH=arm64 ;;
   *) die "暂不支持架构：$(uname -m)" ;;
 esac
+
+backup_smartdns(){
+  local d="$CONFIG_DIR/backups/smartdns-original" p fragment
+  install -d -m 0700 "$d"
+  if command -v smartdns >/dev/null 2>&1; then
+    touch "$d/preexisting"
+    p="$(command -v smartdns)"
+    printf '%s\n' "$p" > "$d/binary.path"
+    cp -a "$p" "$d/smartdns.bin" 2>/dev/null || true
+  else
+    touch "$d/installed-by-smartunlock"
+  fi
+  if [[ -f /etc/smartdns/smartdns.conf ]]; then
+    cp -a /etc/smartdns/smartdns.conf "$d/smartdns.conf"
+    touch "$d/config.existed"
+  fi
+  [[ -f /etc/default/smartdns ]] && cp -a /etc/default/smartdns "$d/default.smartdns" || true
+  [[ -f /etc/init.d/smartdns ]] && cp -a /etc/init.d/smartdns "$d/init.smartdns" || true
+  fragment="$(systemctl show -p FragmentPath --value smartdns.service 2>/dev/null || true)"
+  if [[ -n "$fragment" && -f "$fragment" ]]; then
+    printf '%s\n' "$fragment" > "$d/service.path"
+    cp -a "$fragment" "$d/smartdns.service" || true
+  fi
+  systemctl is-enabled --quiet smartdns.service 2>/dev/null && touch "$d/service.enabled" || true
+  systemctl is-active --quiet smartdns.service 2>/dev/null && touch "$d/service.active" || true
+}
+
+record_smartdns_install(){
+  local d="$CONFIG_DIR/backups/smartdns-original" fragment
+  [[ -f "$d/installed-by-smartunlock" ]] || return 0
+  command -v smartdns > "$d/binary.path"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  fragment="$(systemctl show -p FragmentPath --value smartdns.service 2>/dev/null || true)"
+  [[ -n "$fragment" ]] && printf '%s\n' "$fragment" > "$d/service.path"
+}
 
 install_binary(){
   local url="https://github.com/$REPOSITORY/releases/download/edge/smartunlock-linux-$ARCH"
@@ -166,8 +202,10 @@ UNIT
   systemctl enable smartunlock.service >/dev/null
 }
 
+backup_smartdns
 install_binary
 install_smartdns
+record_smartdns_install
 collect_config
 
 info '安装阶段检测服务器原生解锁能力'
@@ -206,3 +244,4 @@ info '执行首次综合解锁复检'
 info '安装完成'
 printf '\n长期保留的核心文件：\n  /usr/local/bin/smartunlock\n  /etc/smartdns-unlock/config.env\n  /var/lib/smartdns-unlock/state.json\n  /var/lib/smartdns-unlock/rules.json\n  /etc/systemd/system/smartunlock.service\n\n'
 printf '常用命令：smartunlock status | list | check | update | health-check\n'
+printf '卸载命令：smartunlock uninstall\n'
