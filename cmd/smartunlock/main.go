@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -25,16 +26,44 @@ smartunlock list
 smartunlock on <平台|streaming|ai|all> [primary|backup]
 smartunlock off <平台|streaming|ai|all>
 smartunlock apply
+smartunlock uninstall [-y|--yes]
 `)
 }
 func signalDaemon(cfg app.Config) { _ = exec.Command("systemctl", "kill", "-s", "HUP", cfg.ServiceName).Run() }
 
+func confirmUninstall() bool {
+	fmt.Print("将停止 SmartUnlock、恢复安装前 DNS，并清理本项目文件。确认卸载？[y/N]: ")
+	s := bufio.NewScanner(os.Stdin)
+	if !s.Scan() {
+		return false
+	}
+	v := strings.ToLower(strings.TrimSpace(s.Text()))
+	return v == "y" || v == "yes"
+}
+
 func main() {
 	cfg, err := app.LoadConfig("")
 	if err != nil { fatal(err) }
-	if err := cfg.Validate(); err != nil { fatal(err) }
 	cmd := "help"
 	if len(os.Args) > 1 { cmd = os.Args[1] }
+
+	if cmd == "uninstall" {
+		if os.Geteuid() != 0 { fatal("卸载需要 root 权限") }
+		force := false
+		for _, a := range os.Args[2:] {
+			if a == "-y" || a == "--yes" { force = true }
+		}
+		if !force && !confirmUninstall() {
+			fmt.Println("已取消卸载")
+			return
+		}
+		warnings := app.Uninstall(cfg)
+		for _, w := range warnings { fmt.Fprintln(os.Stderr, "警告：", w) }
+		fmt.Println("SmartUnlock 已卸载；安装前 DNS/SmartDNS 状态已按可用备份恢复。")
+		return
+	}
+
+	if err := cfg.Validate(); err != nil { fatal(err) }
 	ctx := context.Background()
 	m, err := app.NewManager(cfg)
 	if err != nil { fatal(err) }
