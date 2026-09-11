@@ -5,7 +5,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'internal/app/soak_test.go'
+      - 'internal/**'
+      - 'cmd/**'
       - '.github/workflows/soak.yml'
 
 permissions:
