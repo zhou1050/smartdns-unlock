@@ -2,87 +2,64 @@ package app
 
 import (
 	"context"
-	"crypto/tls"
-	"fmt"
+	"encoding/binary"
 	"net"
-	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
 
-func endpointHostPort(proto, endpoint string) (string, string, error) {
-	e := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(endpoint, "tls://"), "tcp://"), "quic://"), "h3://")
-	if proto == "doh" || proto == "doh3" {
-		u, err := url.Parse(endpoint)
-		if err != nil {
-			return "", "", err
+func dnsQueryPacket(name string, id uint16) []byte {
+	q := make([]byte, 12, 64)
+	binary.BigEndian.PutUint16(q[0:2], id)
+	binary.BigEndian.PutUint16(q[2:4], 0x0100) // recursion desired
+	binary.BigEndian.PutUint16(q[4:6], 1)
+	for _, label := range strings.Split(strings.TrimSuffix(name, "."), ".") {
+		if label == "" || len(label) > 63 {
+			continue
 		}
-		h := u.Hostname()
-		p := u.Port()
-		if p == "" {
-			p = "443"
-		}
-		return h, p, nil
+		q = append(q, byte(len(label)))
+		q = append(q, label...)
 	}
-	h, p, err := net.SplitHostPort(e)
-	if err == nil {
-		return h, p, nil
-	}
-	if net.ParseIP(e) != nil || !strings.Contains(e, ":") {
-		if proto == "dot" || proto == "doq" {
-			return e, "853", nil
-		}
-		return e, "53", nil
-	}
-	return "", "", err
+	q = append(q, 0, 0, 1, 0, 1) // A / IN
+	return q
 }
 
-func CheckEndpoint(ctx context.Context, proto, endpoint string) bool {
-	if endpoint == "" {
+func validDNSResponse(b []byte, id uint16) bool {
+	if len(b) < 12 || binary.BigEndian.Uint16(b[0:2]) != id {
 		return false
 	}
-	h, p, err := endpointHostPort(proto, endpoint)
+	flags := binary.BigEndian.Uint16(b[2:4])
+	if flags&0x8000 == 0 || flags&0x000f != 0 { // response + NOERROR
+		return false
+	}
+	return binary.BigEndian.Uint16(b[6:8]) > 0
+}
+
+// CheckDNSListener performs an actual DNS A query through a loopback SmartDNS
+// listener that is pinned to one upstream group. This verifies DNS resolution,
+// not just socket reachability, and therefore works for UDP/TCP/DoT/DoH/DoQ/DoH3
+// without reimplementing every upstream transport in Go.
+func CheckDNSListener(ctx context.Context, addr string) bool {
+	if addr == "" {
+		return false
+	}
+	id := uint16(time.Now().UnixNano())
+	q := dnsQueryPacket("example.com", id)
+	d := net.Dialer{Timeout: 2 * time.Second}
+	c, err := d.DialContext(ctx, "udp", addr)
 	if err != nil {
 		return false
 	}
-	d := net.Dialer{Timeout: 5 * time.Second}
-	switch proto {
-	case "doh", "doh3":
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-		if err != nil {
-			return false
-		}
-		cl := http.Client{Timeout: 7 * time.Second}
-		r, err := cl.Do(req)
-		if err != nil {
-			return false
-		}
-		r.Body.Close()
-		return r.StatusCode > 0
-	case "dot":
-		c, err := tls.DialWithDialer(&d, "tcp", net.JoinHostPort(h, p), &tls.Config{ServerName: h, MinVersion: tls.VersionTLS12})
-		if err != nil {
-			return false
-		}
-		c.Close()
-		return true
-	case "tcp":
-		c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(h, p))
-		if err != nil {
-			return false
-		}
-		c.Close()
-		return true
-	case "udp", "doq":
-		c, err := d.DialContext(ctx, "udp", net.JoinHostPort(h, p))
-		if err != nil {
-			return false
-		}
-		c.Close()
-		return true
-	default:
-		_ = fmt.Sprintf("")
+	defer c.Close()
+	deadline := time.Now().Add(4 * time.Second)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	_ = c.SetDeadline(deadline)
+	if _, err = c.Write(q); err != nil {
 		return false
 	}
+	buf := make([]byte, 4096)
+	n, err := c.Read(buf)
+	return err == nil && validDNSResponse(buf[:n], id)
 }
