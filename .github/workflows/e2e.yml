@@ -1,0 +1,141 @@
+name: SmartUnlock Debian E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Debian systemd test image
+        run: |
+          cat > /tmp/Dockerfile.smartunlock-e2e <<'DOCKER'
+          FROM debian:12
+          ENV container=docker DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv ca-certificates curl && rm -rf /var/lib/apt/lists/*
+          STOPSIGNAL SIGRTMIN+3
+          CMD ["/sbin/init"]
+          DOCKER
+          docker build -f /tmp/Dockerfile.smartunlock-e2e -t smartunlock-e2e /tmp
+
+      - name: Start isolated Debian 12 with systemd
+        run: |
+          docker run -d --name smartunlock-e2e --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD:/src:ro" smartunlock-e2e
+          for i in $(seq 1 30); do
+            docker exec smartunlock-e2e systemctl is-system-running --wait >/dev/null 2>&1 && break || true
+            sleep 1
+          done
+          docker exec smartunlock-e2e bash -lc 'cp -L /etc/resolv.conf /tmp/resolv.before; umount /etc/resolv.conf 2>/dev/null || true; cp /tmp/resolv.before /etc/resolv.conf; cp /etc/resolv.conf /tmp/resolv.expected'
+
+      - name: Install with real SmartDNS and native scan
+        run: |
+          docker exec \
+            -e UNLOCK_PRIMARY='https://cloudflare-dns.com/dns-query' \
+            -e UNLOCK_BACKUP='https://dns.google/dns-query' \
+            -e AUTO_NATIVE_DETECT=1 \
+            -e CHECK_INTERVAL=1m \
+            -e RULE_UPDATE_TIME=23:51 \
+            -e PLATFORM_CHECK_TIME=23:52 \
+            -e TG_REPORT_TIME=23:53 \
+            smartunlock-e2e bash /src/install.sh
+
+      - name: Verify installed service, DNS takeover and CLI
+        run: |
+          docker exec smartunlock-e2e bash -lc '
+            set -euxo pipefail
+            systemctl is-active --quiet smartunlock.service
+            test "$(awk "/^nameserver/{print \$2; exit}" /etc/resolv.conf)" = 127.0.0.1
+            getent ahostsv4 github.com >/dev/null
+            smartunlock status
+            smartunlock list | head -20
+            smartunlock health-check | tee /tmp/health-initial.txt
+            grep -q "主=true" /tmp/health-initial.txt
+            grep -q "备用=true" /tmp/health-initial.txt
+            smartunlock update
+            smartunlock on netflix backup
+            smartunlock list | grep "^netflix" | grep -q backup
+            smartunlock off netflix
+            smartunlock list | grep "^netflix" | grep -q off
+            smartunlock on netflix primary
+            smartunlock list | grep "^netflix" | grep -q primary
+            dig @127.0.0.1 example.com A +time=5 +tries=1 +short | grep -q .
+          '
+
+      - name: Observe one automatic health interval
+        run: |
+          sleep 70
+          docker exec smartunlock-e2e bash -lc 'systemctl is-active --quiet smartunlock.service; smartunlock status; journalctl -u smartunlock.service -n 80 --no-pager'
+
+      - name: Inject primary DNS failure and verify failover
+        run: |
+          docker exec smartunlock-e2e bash -lc '
+            set -euxo pipefail
+            sed -i "s|^UNLOCK_PRIMARY=.*|UNLOCK_PRIMARY=https://127.0.0.1:9/dns-query|" /etc/smartdns-unlock/config.env
+            systemctl kill -s HUP smartunlock.service
+            sleep 3
+            smartunlock health-check | tee /tmp/health-primary-down.txt
+            grep -q "主=false" /tmp/health-primary-down.txt
+            grep -q "备用=true" /tmp/health-primary-down.txt
+            grep -q "unlock_backup" /run/smartdns-unlock/platforms.conf
+            sed -i "s|^UNLOCK_PRIMARY=.*|UNLOCK_PRIMARY=https://cloudflare-dns.com/dns-query|" /etc/smartdns-unlock/config.env
+            systemctl kill -s HUP smartunlock.service
+            sleep 3
+            smartunlock health-check | grep -q "主=true"
+          '
+
+      - name: Inject backup DNS failure and verify failback
+        run: |
+          docker exec smartunlock-e2e bash -lc '
+            set -euxo pipefail
+            smartunlock on netflix backup
+            sed -i "s|^UNLOCK_BACKUP=.*|UNLOCK_BACKUP=https://127.0.0.1:9/dns-query|" /etc/smartdns-unlock/config.env
+            systemctl kill -s HUP smartunlock.service
+            sleep 3
+            smartunlock health-check | tee /tmp/health-backup-down.txt
+            grep -q "主=true" /tmp/health-backup-down.txt
+            grep -q "备用=false" /tmp/health-backup-down.txt
+            awk "/su_netflix/{show=2} show>0{print;show--}" /run/smartdns-unlock/platforms.conf | grep -q "unlock_primary"
+            sed -i "s|^UNLOCK_BACKUP=.*|UNLOCK_BACKUP=https://dns.google/dns-query|" /etc/smartdns-unlock/config.env
+            systemctl kill -s HUP smartunlock.service
+            sleep 3
+            smartunlock health-check | grep -q "备用=true"
+            smartunlock on netflix primary
+          '
+
+      - name: Capture logs and uninstall
+        if: always()
+        run: |
+          docker exec smartunlock-e2e bash -lc 'journalctl -u smartunlock.service --no-pager > /tmp/smartunlock-journal.txt || true; cp /var/log/smartdns/smartdns.log /tmp/smartdns.log 2>/dev/null || true'
+          docker cp smartunlock-e2e:/tmp/smartunlock-journal.txt ./smartunlock-journal.txt || true
+          docker cp smartunlock-e2e:/tmp/smartdns.log ./smartdns.log || true
+          if docker exec smartunlock-e2e test -x /usr/local/bin/smartunlock; then
+            docker exec smartunlock-e2e smartunlock uninstall -y
+            docker exec smartunlock-e2e bash -lc '
+              set -euxo pipefail
+              test ! -e /usr/local/bin/smartunlock
+              test ! -e /etc/systemd/system/smartunlock.service
+              test ! -d /etc/smartdns-unlock
+              ! command -v smartdns
+              cmp -s /etc/resolv.conf /tmp/resolv.expected
+            '
+          fi
+
+      - name: Show collected logs
+        if: always()
+        run: |
+          echo '===== smartunlock journal ====='
+          tail -n 200 smartunlock-journal.txt 2>/dev/null || true
+          echo '===== smartdns log ====='
+          tail -n 200 smartdns.log 2>/dev/null || true
+          docker rm -f smartunlock-e2e >/dev/null 2>&1 || true
