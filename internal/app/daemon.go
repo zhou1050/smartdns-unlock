@@ -79,12 +79,13 @@ func RunDaemon(ctx context.Context, cfg Config) error {
 	defer reportTimer.Stop()
 
 	// CLI operations can arrive back-to-back (update/on/off/on). Restarting
-	// SmartDNS for every HUP creates a short DNS outage. Coalesce a burst into
-	// one reload/restart after a small quiet window.
+	// SmartDNS for every HUP creates a short DNS outage. Coalesce the whole
+	// burst into one trailing-edge reload after a quiet window long enough to
+	// cover sequential CLI commands and disk/state updates.
 	var reloadTimer *time.Timer
 	var reloadC <-chan time.Time
 	queueReload := func() {
-		const debounce = 500 * time.Millisecond
+		const debounce = 2 * time.Second
 		if reloadTimer == nil {
 			reloadTimer = time.NewTimer(debounce)
 		} else {
