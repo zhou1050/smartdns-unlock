@@ -24,6 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Build exact commit binary for E2E
+        run: |
+          mkdir -p dist
+          docker run --rm -v "$PWD:/src" -w /src golang:1.22-bookworm \
+            sh -lc "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-e2e ./cmd/smartunlock"
+          test -x dist/smartunlock-e2e
+
       - name: Build Debian systemd test image
         run: |
           cat > /tmp/Dockerfile.smartunlock-e2e <<'DOCKER'
@@ -48,6 +55,7 @@ jobs:
       - name: Install with real SmartDNS and native scan
         run: |
           docker exec \
+            -e SMARTUNLOCK_BINARY='/src/dist/smartunlock-e2e' \
             -e UNLOCK_PRIMARY='https://cloudflare-dns.com/dns-query' \
             -e UNLOCK_BACKUP='https://dns.google/dns-query' \
             -e AUTO_NATIVE_DETECT=1 \
@@ -76,6 +84,7 @@ jobs:
             smartunlock list | grep "^netflix" | grep -q off
             smartunlock on netflix primary
             smartunlock list | grep "^netflix" | grep -q primary
+            sleep 1
             dig @127.0.0.1 example.com A +time=5 +tries=1 +short | grep -q .
           '
 
