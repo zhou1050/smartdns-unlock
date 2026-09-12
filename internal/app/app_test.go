@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -79,4 +80,26 @@ func TestCheckDNSListener(t *testing.T) {
 	stop()
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond); defer cancel2()
 	if CheckDNSListener(ctx2, addr) { t.Fatal("stopped DNS listener reported healthy") }
+}
+
+func TestReliableProbeRegistry(t *testing.T) {
+	want := []string{
+		"netflix", "disney", "youtube", "primevideo", "max", "hulu", "spotify", "tiktok", "dazn", "bbciplayer",
+		"paramount", "peacock", "crunchyroll", "abema", "bahamut", "bilibili", "iqiyi", "viu", "tvb", "openai", "claude", "microsoftcopilot",
+	}
+	var got []string
+	for _, p := range Platforms {
+		if p.Probe != "" { got = append(got, p.ID) }
+	}
+	sort.Strings(want); sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("reliable probe registry changed\nwant=%v\n got=%v", want, got)
+	}
+}
+
+func TestProbeJSONHelpers(t *testing.T) {
+	body := `{"Region":{"isAllowed":true,"GeolocatedCountry":"JP"},"nested":{"items":[{"store_region":"SG"}]}}`
+	if b, ok := jsonBoolAt(body, "Region", "isAllowed"); !ok || !b { t.Fatal("nested bool parse failed") }
+	if got := jsonStringAt(body, "Region", "GeolocatedCountry"); got != "JP" { t.Fatalf("nested string=%q", got) }
+	if got := findJSONString(body, "store_region"); got != "SG" { t.Fatalf("recursive string=%q", got) }
 }
