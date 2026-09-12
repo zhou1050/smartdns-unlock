@@ -24,6 +24,7 @@ TGBOT_CONFIG="${TGBOT:-}"
 WORK="$(mktemp -d /tmp/smartunlock-install.XXXXXX)"
 DNS_PREPARED=0
 DNS_OK=0
+BINARY_UPGRADE_PENDING=0
 
 info(){ printf '\033[1;32m[SmartUnlock]\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;33m[SmartUnlock]\033[0m %s\n' "$*" >&2; }
@@ -37,6 +38,12 @@ source /etc/os-release
 
 cleanup(){
   local rc=$?
+  if [[ $rc != 0 && $BINARY_UPGRADE_PENDING == 1 && -f "$WORK/smartunlock.old" ]]; then
+    warn '程序升级未完成，恢复旧版 smartunlock'
+    rm -f "$BIN"
+    cp -a "$WORK/smartunlock.old" "$BIN"
+    systemctl restart smartunlock.service >/dev/null 2>&1 || true
+  fi
   if [[ $DNS_PREPARED == 1 && $DNS_OK != 1 ]]; then
     warn '安装未完成，恢复本次安装前 DNS'
     systemctl disable --now smartunlock.service >/dev/null 2>&1 || true
@@ -119,6 +126,25 @@ install_binary(){
   tar -xzf "$WORK/src.tar.gz" --strip-components=1 -C "$WORK/src"
   (cd "$WORK/src" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$WORK/smartunlock" ./cmd/smartunlock)
   install -m 0755 "$WORK/smartunlock" "$BIN"
+}
+
+upgrade_existing(){
+  info '检测到现有 SmartUnlock，仅升级程序并保留配置、状态和 DNS 环境'
+  cp -a "$BIN" "$WORK/smartunlock.old"
+  BINARY_UPGRADE_PENDING=1
+  rm -f "$BIN"
+  install_binary
+  "$BIN" version >/dev/null || die '新 smartunlock 二进制验证失败'
+  systemctl restart smartunlock.service || die '新版本服务启动失败'
+  for _ in $(seq 1 30); do
+    if dig @127.0.0.1 cloudflare.com A +time=2 +tries=1 +short 2>/dev/null | grep -q .; then
+      BINARY_UPGRADE_PENDING=0
+      info "程序升级完成：$($BIN version)"
+      return 0
+    fi
+    sleep 1
+  done
+  die '升级后本机 DNS 验证失败'
 }
 
 smartdns_compatible(){
@@ -255,6 +281,10 @@ UNIT
   systemctl enable smartunlock.service >/dev/null
 }
 
+if [[ -x "$BIN" && -f "$CONFIG_DIR/config.env" && -f "$SERVICE" && "${SMARTUNLOCK_FULL_REINSTALL:-0}" != 1 ]]; then
+  upgrade_existing
+  exit 0
+fi
 install_binary
 backup_smartdns
 install_smartdns
@@ -304,5 +334,5 @@ info '执行首次综合解锁复检'
 
 info '安装完成'
 printf '\n长期保留的核心文件：\n  /usr/local/bin/smartunlock\n  /etc/smartdns-unlock/config.env\n  /var/lib/smartdns-unlock/state.json\n  /var/lib/smartdns-unlock/rules.json\n  /etc/systemd/system/smartunlock.service\n\n'
-printf '常用命令：smartunlock status | list | check | update | health-check\n'
+printf '常用命令：smartunlock status | list | check | update | upgrade | version | health-check\n'
 printf '卸载命令：sudo smartunlock uninstall\n'

@@ -94,6 +94,17 @@ func mustContain(t *testing.T, path, want string) {
 	if !strings.Contains(string(b), want) { t.Fatalf("%s missing %q:\n%s", path, want, string(b)) }
 }
 
+func mustRouteContain(t *testing.T, path, routeName, want string) {
+	t.Helper(); b, err := os.ReadFile(path); if err != nil { t.Fatal(err) }
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, "domain-set:"+routeName) {
+			if !strings.Contains(line, want) { t.Fatalf("route %s missing %q: %s", routeName, want, line) }
+			return
+		}
+	}
+	t.Fatalf("route %s not found in %s", routeName, path)
+}
+
 func TestDaemonSoak(t *testing.T) {
 	if os.Getenv("SMARTUNLOCK_SOAK") != "1" { t.Skip("set SMARTUNLOCK_SOAK=1") }
 	start := time.Now()
@@ -114,9 +125,9 @@ func TestDaemonSoak(t *testing.T) {
 	cfg.SmartDNSBin = fake
 	cfg.CheckInterval = time.Second // soak only; production validation remains >=1m
 	if err := EnsureDirs(cfg); err != nil { t.Fatal(err) }
-	rules := RulesFile{Version:1, UpdatedAt:time.Now(), Rules:map[string][]string{"netflix":{"netflix.com"}, "openai":{"openai.com","chatgpt.com"}}}
+	rules := RulesFile{Version:1, UpdatedAt:time.Now(), Rules:map[string][]string{"netflix":{"netflix.com"}, "openai":{"openai.com","chatgpt.com"}, "gemini":{"gemini.google.com"}}}
 	if err := SaveRules(cfg.RulesPath, rules); err != nil { t.Fatal(err) }
-	s := NewState(); s.Initialized = true; s.Routes["netflix"] = "primary"; s.Routes["openai"] = "backup"
+	s := NewState(); s.Initialized = true; s.Routes["netflix"] = "primary"; s.Routes["openai"] = "backup"; s.Routes["gemini"] = "backup"; s.RouteModes["gemini"] = "manual"
 	if err := SaveState(cfg.StatePath, s); err != nil { t.Fatal(err) }
 	configText := fmt.Sprintf("UNLOCK_PRIMARY_PROTO=udp\nUNLOCK_PRIMARY=127.0.0.1:53001\nUNLOCK_BACKUP_PROTO=udp\nUNLOCK_BACKUP=127.0.0.1:53002\nCHECK_INTERVAL=1m\nRULE_UPDATE_TIME=23:51\nPLATFORM_CHECK_TIME=23:52\nTG_REPORT_TIME=23:53\nSMARTDNS_BIN=%s\nHEALTH_PRIMARY_ADDR=%s\nHEALTH_BACKUP_ADDR=%s\nAUTO_NATIVE_DETECT=true\n", fake, primary.addr, backup.addr)
 	if err := os.WriteFile(cfg.ConfigPath, []byte(configText), 0600); err != nil { t.Fatal(err) }
@@ -129,7 +140,8 @@ func TestDaemonSoak(t *testing.T) {
 
 	baseG := runtime.NumGoroutine(); baseRSS := readRSSKB(); maxG := baseG; maxRSS := baseRSS
 	monitorDone := make(chan struct{})
-	go func(){ ticker := time.NewTicker(2*time.Second); defer ticker.Stop(); for { select { case <-monitorDone: return; case <-ticker.C: g:=runtime.NumGoroutine(); r:=readRSSKB(); if g>maxG { maxG=g }; if r>maxRSS { maxRSS=r } } } }()
+	monitorStopped := make(chan struct{})
+	go func(){ defer close(monitorStopped); ticker := time.NewTicker(2*time.Second); defer ticker.Stop(); for { select { case <-monitorDone: return; case <-ticker.C: g:=runtime.NumGoroutine(); r:=readRSSKB(); if g>maxG { maxG=g }; if r>maxRSS { maxRSS=r } } } }()
 
 	time.Sleep(20*time.Second)
 	primary.Stop(); waitHealth(t, cfg.StatePath, false, true, 8*time.Second)
@@ -145,6 +157,7 @@ func TestDaemonSoak(t *testing.T) {
 	backup.Stop(); waitHealth(t, cfg.StatePath, true, false, 8*time.Second)
 	mustContain(t, filepath.Join(cfg.RuntimeDir, "platforms.conf"), "su_openai")
 	mustContain(t, filepath.Join(cfg.RuntimeDir, "platforms.conf"), "unlock_primary")
+	mustRouteContain(t, filepath.Join(cfg.RuntimeDir, "platforms.conf"), "su_gemini", "unlock_backup")
 	t.Logf("[+%s] injected backup DNS failure -> backup routes failed back", time.Since(start).Round(time.Second))
 
 	time.Sleep(15*time.Second)
@@ -160,6 +173,7 @@ func TestDaemonSoak(t *testing.T) {
 	// Continue until the ten-minute mark to catch delayed post-reload failures.
 	if wait := time.Until(start.Add(targetDuration)); wait > 0 { time.Sleep(wait) }
 	close(monitorDone)
+	<-monitorStopped
 	cancel()
 	select { case err := <-errCh: if err != nil { t.Fatalf("daemon exit: %v", err) }; case <-time.After(5*time.Second): t.Fatal("daemon did not stop cleanly") }
 

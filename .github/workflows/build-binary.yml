@@ -32,8 +32,10 @@ jobs:
       - name: Build static binaries
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-linux-amd64 ./cmd/smartunlock
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-linux-arm64 ./cmd/smartunlock
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X main.version=edge -X main.commit=${GITHUB_SHA} -X main.buildTime=${BUILD_TIME}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/smartunlock-linux-amd64 ./cmd/smartunlock
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o dist/smartunlock-linux-arm64 ./cmd/smartunlock
           sha256sum dist/smartunlock-linux-* > dist/SHA256SUMS
       - name: Publish rolling edge release
         env:

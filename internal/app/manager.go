@@ -114,7 +114,9 @@ func (m *Manager) NativeScan(ctx context.Context) error {
 	m.Mu.Lock(); defer m.Mu.Unlock()
 	checks := ProbeAll(ctx)
 	if m.State.Routes == nil { m.State.Routes = map[string]string{} }
+	if m.State.RouteModes == nil { m.State.RouteModes = map[string]string{} }
 	for _, p := range Platforms {
+		m.State.RouteModes[p.ID] = "auto"
 		r := checks[p.ID]
 		if !m.Cfg.NativeAutoDetect { m.State.Routes[p.ID] = "primary"; continue }
 		if p.Probe != "" && r.Status == "pass" { m.State.Routes[p.ID] = "native" } else { m.State.Routes[p.ID] = "primary" }
@@ -165,6 +167,7 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 	var nativeSuspects []string
 	m.Mu.Lock()
 	for _, p := range Platforms {
+		if m.State.RouteMode(p.ID) != "auto" { continue }
 		if p.Probe != "" && checks[p.ID].Status == "fail" && m.State.Routes[p.ID] == "native" && m.Cfg.Primary != "" { nativeSuspects = append(nativeSuspects, p.ID) }
 	}
 	m.Mu.Unlock()
@@ -192,6 +195,7 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 	var routeSuspects []string
 	m.Mu.Lock()
 	for _, p := range Platforms {
+		if m.State.RouteMode(p.ID) != "auto" { continue }
 		if p.Probe == "" || checks[p.ID].Status != "fail" { continue }
 		route := m.State.Routes[p.ID]
 		if route == "primary" && m.Cfg.Backup != "" { routeSuspects = append(routeSuspects, p.ID) }
@@ -209,6 +213,7 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 	original := map[string]string{}; var candidates []string
 	m.Mu.Lock()
 	for _, p := range Platforms {
+		if m.State.RouteMode(p.ID) != "auto" { continue }
 		if p.Probe == "" || checks[p.ID].Status != "fail" { continue }
 		route := m.State.Routes[p.ID]; candidate := ""
 		if route == "primary" && m.Cfg.Backup != "" { candidate = "backup" } else if route == "backup" && m.Cfg.Primary != "" { candidate = "primary" }
@@ -245,17 +250,38 @@ func Summary(checks map[string]ProbeResult) string {
 func (m *Manager) StatusText() string {
 	m.Mu.Lock(); defer m.Mu.Unlock(); counts:=map[string]int{}
 	for _, v := range m.State.Routes { counts[v]++ }
-	return fmt.Sprintf("SmartUnlock\n主DNS健康：%v\n备用DNS健康：%v\n路由：原生 %d / 主 %d / 备用 %d / 关闭 %d\n规则更新时间：%s\n最近平台检测：%s", m.State.PrimaryHealthy,m.State.BackupHealthy,counts["native"],counts["primary"],counts["backup"],counts["off"],m.State.RulesUpdatedAt.Format(time.RFC3339),m.State.LastPlatformScan.Format(time.RFC3339))
+	modes:=map[string]int{}; for _, p := range Platforms { modes[m.State.RouteMode(p.ID)]++ }
+	return fmt.Sprintf("SmartUnlock\n主DNS健康：%v\n备用DNS健康：%v\n模式：自动 %d / 手动 %d\n路由：原生 %d / 主 %d / 备用 %d / 关闭 %d\n规则更新时间：%s\n最近平台检测：%s", m.State.PrimaryHealthy,m.State.BackupHealthy,modes["auto"],modes["manual"],counts["native"],counts["primary"],counts["backup"],counts["off"],m.State.RulesUpdatedAt.Format(time.RFC3339),m.State.LastPlatformScan.Format(time.RFC3339))
 }
 
 func (m *Manager) SetRoute(target, route string) error {
 	if route!="native" && route!="primary" && route!="backup" && route!="off" { return fmt.Errorf("invalid route") }
 	m.Mu.Lock(); defer m.Mu.Unlock()
+	if m.State.RouteModes == nil { m.State.RouteModes = map[string]string{} }
 	if target=="streaming" || target=="ai" || target=="all" {
-		for _, p:=range Platforms { if target=="all" || p.Category==target { m.State.Routes[p.ID]=route } }
+		for _, p:=range Platforms { if target=="all" || p.Category==target { m.State.Routes[p.ID]=route; m.State.RouteModes[p.ID]="manual" } }
 	} else {
 		if _,ok:=PlatformByID(target); !ok { return fmt.Errorf("unknown platform %s", target) }
 		m.State.Routes[target]=route
+		m.State.RouteModes[target]="manual"
+	}
+	return SaveState(m.Cfg.StatePath,m.State)
+}
+
+func (m *Manager) SetAuto(target string) error {
+	m.Mu.Lock(); defer m.Mu.Unlock()
+	if m.State.RouteModes == nil { m.State.RouteModes = map[string]string{} }
+	set := func(id string) {
+		m.State.RouteModes[id] = "auto"
+		route := m.State.Routes[id]
+		if route == "native" || route == "primary" || route == "backup" { return }
+		if m.Cfg.Primary != "" { m.State.Routes[id] = "primary" } else if m.Cfg.Backup != "" { m.State.Routes[id] = "backup" } else { m.State.Routes[id] = "native" }
+	}
+	if target=="streaming" || target=="ai" || target=="all" {
+		for _, p:=range Platforms { if target=="all" || p.Category==target { set(p.ID) } }
+	} else {
+		if _,ok:=PlatformByID(target); !ok { return fmt.Errorf("unknown platform %s", target) }
+		set(target)
 	}
 	return SaveState(m.Cfg.StatePath,m.State)
 }

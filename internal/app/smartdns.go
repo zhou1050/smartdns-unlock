@@ -81,13 +81,15 @@ func Render(cfg Config, s State, rules RulesFile) error {
 		mode := s.Routes[p.ID]; if mode == "" { mode = "primary" }
 		if mode == "off" || mode == "native" { continue }
 		group := mode
+		manual := s.RouteMode(p.ID) == "manual"
 
 		// Health failover is deliberately non-destructive: State.Routes keeps the
-		// user's desired route. If the desired line is down, use the other healthy
+		// automatically selected route. If the desired line is down, use the other healthy
 		// unlock line. If neither configured unlock line is healthy, omit the
 		// platform rule entirely so SmartDNS's default public resolvers preserve
-		// basic reachability. A later health recovery renders the route again.
-		if group == "primary" {
+		// basic reachability. Manual routes are pinned exactly as requested and
+		// never fail over behind the user's back.
+		if !manual && group == "primary" {
 			if cfg.Primary == "" || !s.PrimaryHealthy {
 				if cfg.Backup != "" && s.BackupHealthy {
 					group = "backup"
@@ -95,7 +97,7 @@ func Render(cfg Config, s State, rules RulesFile) error {
 					continue
 				}
 			}
-		} else if group == "backup" {
+		} else if !manual && group == "backup" {
 			if cfg.Backup == "" || !s.BackupHealthy {
 				if cfg.Primary != "" && s.PrimaryHealthy {
 					group = "primary"
@@ -151,65 +153,68 @@ conf-file %s
 type SmartDNSProcess struct {
 	mu  sync.Mutex
 	cmd *exec.Cmd
+	done chan struct{}
 	cfg Config
 }
 
 func NewSmartDNSProcess(cfg Config) *SmartDNSProcess { return &SmartDNSProcess{cfg: cfg} }
 func (p *SmartDNSProcess) SetConfig(cfg Config) { p.mu.Lock(); p.cfg = cfg; p.mu.Unlock() }
 
-func waitProcessExit(cmd *exec.Cmd, timeout time.Duration) bool {
-	if cmd == nil || cmd.Process == nil { return true }
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cmd.ProcessState != nil { return true }
-		time.Sleep(25 * time.Millisecond)
+func waitProcessExit(done <-chan struct{}, timeout time.Duration) bool {
+	if done == nil { return true }
+	select {
+	case <-done: return true
+	case <-time.After(timeout): return false
 	}
-	return cmd.ProcessState != nil
 }
 
-func terminateProcess(cmd *exec.Cmd) {
-	if cmd == nil || cmd.Process == nil || cmd.ProcessState != nil { return }
+func terminateProcess(cmd *exec.Cmd, done <-chan struct{}) {
+	if cmd == nil || cmd.Process == nil { return }
 	_ = cmd.Process.Signal(syscall.SIGTERM)
-	if waitProcessExit(cmd, 2*time.Second) { return }
+	if waitProcessExit(done, 2*time.Second) { return }
 	_ = cmd.Process.Kill()
-	_ = waitProcessExit(cmd, time.Second)
+	_ = waitProcessExit(done, time.Second)
 }
 
 func (p *SmartDNSProcess) Start() error {
 	p.mu.Lock()
-	if p.cmd != nil && p.cmd.Process != nil && p.cmd.ProcessState == nil { p.mu.Unlock(); return nil }
+	if p.cmd != nil { p.mu.Unlock(); return nil }
 	cmd := exec.Command(p.cfg.SmartDNSBin, "-f", "-x", "-c", p.cfg.SmartDNSConf)
 	cmd.Stdout = os.Stdout; cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil { p.mu.Unlock(); return err }
 	p.cmd = cmd
+	done := make(chan struct{})
+	p.done = done
 	p.mu.Unlock()
 
 	go func() {
 		_ = cmd.Wait()
+		close(done)
 		p.mu.Lock()
-		if p.cmd == cmd { p.cmd = nil }
+		if p.cmd == cmd { p.cmd = nil; p.done = nil }
 		p.mu.Unlock()
 	}()
 
 	// SmartDNS configuration errors normally make the child exit immediately.
 	// Do not report a successful daemon start in that case.
-	time.Sleep(500 * time.Millisecond)
-	if cmd.ProcessState != nil {
-		p.mu.Lock(); if p.cmd == cmd { p.cmd = nil }; p.mu.Unlock()
+	select {
+	case <-done:
+		p.mu.Lock(); if p.cmd == cmd { p.cmd = nil; p.done = nil }; p.mu.Unlock()
 		return fmt.Errorf("smartdns exited during startup: %s", cmd.ProcessState.String())
+	case <-time.After(500 * time.Millisecond):
 	}
 	return nil
 }
 
 func (p *SmartDNSProcess) Restart() error {
-	p.mu.Lock(); old := p.cmd; p.cmd = nil; p.mu.Unlock()
-	terminateProcess(old)
+	p.mu.Lock(); old, done := p.cmd, p.done; p.cmd = nil; p.done = nil; p.mu.Unlock()
+	terminateProcess(old, done)
 	return p.Start()
 }
 
 func (p *SmartDNSProcess) Stop() {
-	p.mu.Lock(); old := p.cmd; p.cmd = nil; p.mu.Unlock()
-	terminateProcess(old)
+	p.mu.Lock(); old, done := p.cmd, p.done; p.cmd = nil; p.done = nil; p.mu.Unlock()
+	terminateProcess(old, done)
 }
 
 func DNSQueryOK() bool { return exec.Command("getent", "ahostsv4", "github.com").Run() == nil }

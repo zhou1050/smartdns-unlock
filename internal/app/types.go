@@ -36,6 +36,7 @@ type State struct {
 	Version          int                    `json:"version"`
 	Initialized      bool                   `json:"initialized"`
 	Routes           map[string]string      `json:"routes"`
+	RouteModes       map[string]string      `json:"route_modes,omitempty"`
 	LastChecks       map[string]ProbeResult `json:"last_checks,omitempty"`
 	PrimaryHealthy   bool                   `json:"primary_healthy"`
 	BackupHealthy    bool                   `json:"backup_healthy"`

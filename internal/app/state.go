@@ -8,7 +8,7 @@ import (
 )
 
 func NewState() State {
-	return State{Version: 1, Routes: map[string]string{}, LastChecks: map[string]ProbeResult{}, PrimaryHealthy: true, BackupHealthy: true}
+	return State{Version: 2, Routes: map[string]string{}, RouteModes: map[string]string{}, LastChecks: map[string]ProbeResult{}, PrimaryHealthy: true, BackupHealthy: true}
 }
 
 func LoadState(path string) (State, error) {
@@ -26,10 +26,30 @@ func LoadState(path string) (State, error) {
 	if s.Routes == nil {
 		s.Routes = map[string]string{}
 	}
+	if s.RouteModes == nil {
+		s.RouteModes = map[string]string{}
+	}
+	// Version 1 did not store a mode. Preserve automatic behaviour by default,
+	// but retain choices that could only have come from an explicit CLI command:
+	// "off", or "backup" on a platform that has no automatic probe.
+	if s.Version < 2 {
+		for id, route := range s.Routes {
+			p, ok := PlatformByID(id)
+			if route == "off" || (ok && p.Probe == "" && route == "backup") {
+				s.RouteModes[id] = "manual"
+			}
+		}
+		s.Version = 2
+	}
 	if s.LastChecks == nil {
 		s.LastChecks = map[string]ProbeResult{}
 	}
 	return s, nil
+}
+
+func (s State) RouteMode(id string) string {
+	if s.RouteModes[id] == "manual" { return "manual" }
+	return "auto"
 }
 
 func SaveState(path string, s State) error {

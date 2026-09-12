@@ -11,6 +11,7 @@ Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务器端采
 - 每天按服务器当前最终配置做综合解锁复检，不刻意绕过已经配置的解锁 DNS。
 - 主 DNS 网络故障时自动使用备用；主 DNS 虽然能解析但平台实际仍失败时，会实测备用线路，备用可用则该平台切备用。
 - 主备都不能实际解锁时保留失败状态并 Telegram 报警，不伪装成功。
+- 每个平台支持自动 / 手动模式：自动模式允许每日检测及健康检查调整线路；手动模式固定指定线路，不被后台任务改动。
 - 每天自动同步 GitHub 规则；新规则应用失败不会影响已有规则缓存。
 - 多个 CLI 配置变更在短时间连续发生时自动合并重载，避免 SmartDNS 重启风暴和 DNS 短暂断流。
 - 内置安全卸载：恢复安装前系统 DNS；服务器原本已有 SmartDNS 时恢复原 SmartDNS，而不是删除它。
@@ -60,13 +61,23 @@ smartunlock list
 smartunlock check
 smartunlock health-check
 smartunlock update
+smartunlock upgrade
+smartunlock version
 
+smartunlock auto netflix
+smartunlock auto streaming
 smartunlock on netflix
 smartunlock on netflix backup
 smartunlock on streaming
 smartunlock on ai
 smartunlock off netflix
 ```
+
+`auto` 将平台交给每日检测自动维护；`on` 和 `off` 都会进入手动模式。升级前已经存在但没有模式字段的状态默认按自动模式兼容；旧状态中的 `off`，以及无自动探针平台的 `backup`，会识别为原有手动选择。当前没有可靠探针的平台会保留现有线路，不会凭 `unknown` 结果切换。
+
+`update` 只更新平台域名规则；`upgrade` 从 GitHub `edge` Release 下载当前架构的最新程序，校验 `SHA256SUMS` 后原子替换并重启服务。新程序启动或本机 DNS 验证失败时会自动恢复旧二进制。`version` 可查看当前构建版本、commit 和构建时间。
+
+首次从不带 `upgrade` 命令的旧版本升级时，可重新执行一键安装命令；安装器检测到现有安装后只替换程序，保留 DNS 配置、平台路由状态和系统 DNS 环境。之后直接使用 `smartunlock upgrade`。如确需完整重装，可设置 `SMARTUNLOCK_FULL_REINSTALL=1`。
 
 查看服务日志：
 

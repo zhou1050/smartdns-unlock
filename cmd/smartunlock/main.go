@@ -12,6 +12,10 @@ import (
 	"github.com/zhou1050/smartdns-unlock/internal/app"
 )
 
+var version = "dev"
+var commit = "unknown"
+var buildTime = "unknown"
+
 func fatal(v any) { fmt.Fprintln(os.Stderr, "错误：", v); os.Exit(1) }
 func usage() {
 	fmt.Print(`SmartDNS Unlock
@@ -21,8 +25,11 @@ smartunlock native-scan
 smartunlock check
 smartunlock health-check
 smartunlock update
+smartunlock upgrade
+smartunlock version
 smartunlock status
 smartunlock list
+smartunlock auto <平台|streaming|ai|all>
 smartunlock on <平台|streaming|ai|all> [primary|backup]
 smartunlock off <平台|streaming|ai|all>
 smartunlock apply
@@ -54,8 +61,18 @@ func main() {
 		fmt.Println("SmartUnlock 已卸载；安装前 DNS/SmartDNS 状态已按可用备份恢复。")
 		return
 	}
+	if cmd == "version" {
+		fmt.Printf("smartunlock %s commit=%s built=%s\n", version, commit, buildTime)
+		return
+	}
 	if err := cfg.Validate(); err != nil { fatal(err) }
 	ctx := context.Background()
+	if cmd == "upgrade" {
+		c, cancel := context.WithTimeout(ctx, 3*time.Minute); defer cancel()
+		changed, digest, e := app.Upgrade(c, cfg); if e != nil { fatal(e) }
+		if changed { fmt.Printf("程序升级完成，SHA256=%s\n", digest) } else { fmt.Printf("已是最新程序，SHA256=%s\n", digest) }
+		return
+	}
 	m, err := app.NewManager(cfg)
 	if err != nil { fatal(err) }
 	switch cmd {
@@ -86,16 +103,22 @@ func main() {
 	case "list":
 		for _, p := range app.Platforms {
 			route := m.State.Routes[p.ID]; if route == "" { route = "primary" }
-			fmt.Printf("%-20s %-24s %-10s %s\n", p.ID, p.Name, p.Category, route)
+			fmt.Printf("%-20s %-24s %-10s %-8s %s\n", p.ID, p.Name, p.Category, m.State.RouteMode(p.ID), route)
 		}
+	case "auto":
+		if len(os.Args) < 3 { fatal("用法: smartunlock auto <平台|分类>") }
+		if e := m.SetAuto(os.Args[2]); e != nil { fatal(e) }; signalDaemon(cfg)
+		fmt.Printf("%s 已设为自动模式\n", os.Args[2])
 	case "on":
 		if len(os.Args) < 3 { fatal("用法: smartunlock on <平台|分类> [primary|backup]") }
 		route := "primary"; if len(os.Args) > 3 { route = strings.ToLower(os.Args[3]) }
 		if route != "primary" && route != "backup" { fatal("仅支持 primary 或 backup") }
 		if e := m.SetRoute(os.Args[2], route); e != nil { fatal(e) }; signalDaemon(cfg)
+		fmt.Printf("%s 已设为手动模式，线路=%s\n", os.Args[2], route)
 	case "off":
 		if len(os.Args) < 3 { fatal("用法: smartunlock off <平台|分类>") }
 		if e := m.SetRoute(os.Args[2], "off"); e != nil { fatal(e) }; signalDaemon(cfg)
+		fmt.Printf("%s 已设为手动模式，状态=off\n", os.Args[2])
 	default:
 		usage()
 	}
