@@ -2,6 +2,24 @@ package app
 
 import "testing"
 
+func TestNetflixChallengeDoesNotFail(t *testing.T) {
+	if got := netflixProbeDecision(403, "https://www.netflix.com/title/81280792", "Access denied"); got != "unknown" {
+		t.Fatalf("expected Netflix challenge unknown, got %q", got)
+	}
+}
+
+func TestNetflixExplicitRegionBlockFails(t *testing.T) {
+	if got := netflixProbeDecision(200, "https://www.netflix.com/title/81280792", "This title is not available in your region"); got != "fail" {
+		t.Fatalf("expected Netflix explicit geo block fail, got %q", got)
+	}
+}
+
+func TestNetflixReachableTitlePasses(t *testing.T) {
+	if got := netflixProbeDecision(200, "https://www.netflix.com/title/81280792", "Netflix"); got != "pass" {
+		t.Fatalf("expected Netflix title pass, got %q", got)
+	}
+}
+
 func TestDisneySupportedLocationPasses(t *testing.T) {
 	graph := `{"extensions":{"sdk":{"session":{"location":{"countryCode":"SG","inSupportedLocation":true}}}}}`
 	status, region := disneyProbeDecision(200, `{"refresh_token":"ok"}`, 200, graph, "https://www.disneyplus.com/")
