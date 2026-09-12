@@ -57,23 +57,29 @@ func checkDNSListenerOnce(ctx context.Context, addr string, timeout time.Duratio
 }
 
 // CheckDNSListener performs actual DNS A queries through a loopback SmartDNS
-// listener pinned to one upstream group. A single transient SERVFAIL/timeout is
-// not enough to mark an upstream unhealthy: SmartDNS may still be warming a
-// TLS/HTTP/QUIC connection just after a reload. Three bounded attempts keep
-// failover responsive while avoiding route flapping on one lost query.
+// listener pinned to one upstream group. Health is decided by a 2-of-3 quorum:
+// one transient lost reply cannot mark a working line down, while one lucky
+// reply cannot immediately revive a flapping line. Healthy lines normally
+// finish after two fast successful queries.
 func CheckDNSListener(ctx context.Context, addr string) bool {
 	if addr == "" {
 		return false
 	}
 	const attempts = 3
+	const quorum = 2
 	const perAttempt = 2 * time.Second
+	successes, failures := 0, 0
 	for i := 0; i < attempts; i++ {
 		if ctx.Err() != nil {
 			return false
 		}
 		id := uint16(time.Now().UnixNano()) + uint16(i)
 		if checkDNSListenerOnce(ctx, addr, perAttempt, id) {
-			return true
+			successes++
+			if successes >= quorum { return true }
+		} else {
+			failures++
+			if failures >= quorum { return false }
 		}
 		if i+1 < attempts {
 			t := time.NewTimer(200 * time.Millisecond)
@@ -85,5 +91,5 @@ func CheckDNSListener(ctx context.Context, addr string) bool {
 			}
 		}
 	}
-	return false
+	return successes >= quorum
 }
