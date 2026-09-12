@@ -60,11 +60,29 @@ func Render(cfg Config, s State, rules RulesFile) error {
 		mode := s.Routes[p.ID]; if mode == "" { mode = "primary" }
 		if mode == "off" || mode == "native" { continue }
 		group := mode
-		if group == "primary" && !s.PrimaryHealthy && s.BackupHealthy && cfg.Backup != "" { group = "backup" }
-		if group == "backup" && !s.BackupHealthy && s.PrimaryHealthy && cfg.Primary != "" { group = "primary" }
-		if group == "backup" && cfg.Backup == "" { group = "primary" }
-		if group == "primary" && cfg.Primary == "" { continue }
-		if group == "backup" && cfg.Backup == "" { continue }
+
+		// Health failover is deliberately non-destructive: State.Routes keeps the
+		// user's desired route. If the desired line is down, use the other healthy
+		// unlock line. If neither configured unlock line is healthy, omit the
+		// platform rule entirely so SmartDNS's default public resolvers preserve
+		// basic reachability. A later health recovery renders the route again.
+		if group == "primary" {
+			if cfg.Primary == "" || !s.PrimaryHealthy {
+				if cfg.Backup != "" && s.BackupHealthy {
+					group = "backup"
+				} else {
+					continue
+				}
+			}
+		} else if group == "backup" {
+			if cfg.Backup == "" || !s.BackupHealthy {
+				if cfg.Primary != "" && s.PrimaryHealthy {
+					group = "primary"
+				} else {
+					continue
+				}
+			}
+		}
 		if group != "primary" && group != "backup" { continue }
 		if _, ok := rules.Rules[p.ID]; !ok { continue }
 		name := "su_" + strings.ReplaceAll(p.ID, "-", "_")
