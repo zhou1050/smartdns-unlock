@@ -82,11 +82,11 @@ jobs:
             grep -q "备用=true" /tmp/health-initial.txt
             smartunlock update
             smartunlock on netflix backup
-            smartunlock list | grep "^netflix" | grep -q backup
+            smartunlock list | grep "^netflix" | grep -q "manual.*backup"
             smartunlock off netflix
-            smartunlock list | grep "^netflix" | grep -q off
-            smartunlock on netflix primary
-            smartunlock list | grep "^netflix" | grep -q primary
+            smartunlock list | grep "^netflix" | grep -q "manual.*off"
+            smartunlock auto netflix
+            smartunlock list | grep "^netflix" | grep -q "auto.*primary"
             sleep 1
             dig @127.0.0.1 example.com A +time=5 +tries=1 +short | grep -q .
           '
@@ -124,12 +124,15 @@ jobs:
             smartunlock health-check | tee /tmp/health-backup-down.txt
             grep -q "主=true" /tmp/health-backup-down.txt
             grep -q "备用=false" /tmp/health-backup-down.txt
+            awk "/su_netflix/{show=2} show>0{print;show--}" /run/smartdns-unlock/platforms.conf | grep -q "unlock_backup"
+            smartunlock auto netflix
+            sleep 3
             awk "/su_netflix/{show=2} show>0{print;show--}" /run/smartdns-unlock/platforms.conf | grep -q "unlock_primary"
             sed -i "s|^UNLOCK_BACKUP=.*|UNLOCK_BACKUP=https://dns.google/dns-query|" /etc/smartdns-unlock/config.env
             systemctl kill --kill-whom=main -s HUP smartunlock.service
             sleep 3
             smartunlock health-check | grep -q "备用=true"
-            smartunlock on netflix primary
+            smartunlock auto netflix
             sleep 1
           '
 
