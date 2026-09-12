@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 REPOSITORY="${SMARTUNLOCK_REPOSITORY:-zhou1050/smartdns-unlock}"
 SMARTDNS_TAG="${SMARTDNS_TAG:-Release48.4}"
+SMARTUNLOCK_BINARY="${SMARTUNLOCK_BINARY:-}"
 CONFIG_DIR=/etc/smartdns-unlock
 STATE_DIR=/var/lib/smartdns-unlock
 BIN=/usr/local/bin/smartunlock
@@ -94,6 +95,12 @@ record_smartdns_install(){
 
 install_binary(){
   local url="https://github.com/$REPOSITORY/releases/download/edge/smartunlock-linux-$ARCH"
+  if [[ -n "$SMARTUNLOCK_BINARY" ]]; then
+    [[ -f "$SMARTUNLOCK_BINARY" ]] || die "指定的 SMARTUNLOCK_BINARY 不存在：$SMARTUNLOCK_BINARY"
+    info "安装指定的 smartunlock 二进制：$SMARTUNLOCK_BINARY"
+    install -m 0755 "$SMARTUNLOCK_BINARY" "$BIN"
+    return
+  fi
   info "下载 smartunlock 单文件二进制 ($ARCH)"
   if curl -fL --retry 3 --connect-timeout 10 "$url" -o "$WORK/smartunlock"; then
     install -m 0755 "$WORK/smartunlock" "$BIN"
