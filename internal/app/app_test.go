@@ -48,6 +48,28 @@ func TestBackupHealthFailback(t *testing.T) {
 	if !strings.Contains(string(b), "unlock_primary") { t.Fatalf("backup failback not rendered: %s", string(b)) }
 }
 
+func TestAllUnlockUpstreamsDownFallsBackToDefaultDNS(t *testing.T) {
+	d := t.TempDir()
+	cfg := DefaultConfig(); cfg.RuntimeDir = filepath.Join(d, "run"); cfg.SmartDNSConf = filepath.Join(d, "smartdns.conf")
+	cfg.Primary = "https://primary.example/dns-query"; cfg.PrimaryProto = "doh"; cfg.Backup = "https://backup.example/dns-query"; cfg.BackupProto = "doh"
+	s := NewState(); s.Routes["openai"] = "primary"; s.PrimaryHealthy = false; s.BackupHealthy = false
+	r := RulesFile{Version: 1, Rules: map[string][]string{"openai": {"openai.com"}}}
+	if err := Render(cfg, s, r); err != nil { t.Fatal(err) }
+	b, _ := os.ReadFile(filepath.Join(cfg.RuntimeDir, "platforms.conf"))
+	if strings.Contains(string(b), "su_openai") { t.Fatalf("dead unlock route should be omitted for public fallback: %s", string(b)) }
+}
+
+func TestOnlyPrimaryDownFallsBackToDefaultDNS(t *testing.T) {
+	d := t.TempDir()
+	cfg := DefaultConfig(); cfg.RuntimeDir = filepath.Join(d, "run"); cfg.SmartDNSConf = filepath.Join(d, "smartdns.conf")
+	cfg.Primary = "https://primary.example/dns-query"; cfg.PrimaryProto = "doh"; cfg.Backup = ""; cfg.BackupProto = ""
+	s := NewState(); s.Routes["openai"] = "primary"; s.PrimaryHealthy = false
+	r := RulesFile{Version: 1, Rules: map[string][]string{"openai": {"openai.com"}}}
+	if err := Render(cfg, s, r); err != nil { t.Fatal(err) }
+	b, _ := os.ReadFile(filepath.Join(cfg.RuntimeDir, "platforms.conf"))
+	if strings.Contains(string(b), "su_openai") { t.Fatalf("dead sole unlock route should be omitted: %s", string(b)) }
+}
+
 func startTestDNS(t *testing.T) (string, func()) {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
