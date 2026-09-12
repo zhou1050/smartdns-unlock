@@ -19,7 +19,12 @@ func probeParamount(ctx context.Context) ProbeResult {
 		return res("fail", "", "Paramount+ geo blocked")
 	}
 	if code >= 200 && code < 400 {
-		return res("pass", "", "Paramount+ main site available")
+		region := "US"
+		parts := strings.Split(strings.Trim(final, "/"), "/")
+		if len(parts) >= 4 && len(parts[3]) == 2 {
+			region = strings.ToUpper(parts[3])
+		}
+		return res("pass", region, "Paramount+ main site available")
 	}
 	return res("unknown", "", fmt.Sprintf("HTTP %d", code))
 }
@@ -47,12 +52,17 @@ func probeCrunchyroll(ctx context.Context) ProbeResult {
 	if code/100 != 2 {
 		return res("unknown", "", fmt.Sprintf("HTTP %d", code))
 	}
-	re := regexp.MustCompile(`(?i)["']?country_code["']?\s*[:=]\s*["']([a-z]{2})["']`)
+	// Pinned RRC treats this particular Crunchyroll probe as US-only.
+	re := regexp.MustCompile(`(?i)['"]code['"]\s*:\s*['"]([a-z]{2})['"]`)
 	m := re.FindStringSubmatch(body)
 	if len(m) < 2 {
 		return res("unknown", "", "Crunchyroll country code unavailable")
 	}
-	return res("pass", strings.ToUpper(m[1]), "Crunchyroll geo country returned")
+	region := strings.ToUpper(m[1])
+	if region == "US" {
+		return res("pass", region, "Crunchyroll US available")
+	}
+	return res("fail", region, "Crunchyroll US unavailable")
 }
 
 func probeIQIYI(ctx context.Context) ProbeResult {
@@ -116,6 +126,9 @@ func probeViu(ctx context.Context) ProbeResult {
 	}
 	if region == "" {
 		return res("unknown", "", "Viu region unavailable")
+	}
+	if region == "NO-SERVICE" {
+		return res("fail", "", "Viu no-service region")
 	}
 	if strings.Contains(strings.ToLower(banBody), "block access") {
 		return res("fail", region, "Viu CDN blocks access")
