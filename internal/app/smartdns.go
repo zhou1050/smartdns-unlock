@@ -87,7 +87,10 @@ func Render(cfg Config, s State, rules RulesFile) error {
 		if _, ok := rules.Rules[p.ID]; !ok { continue }
 		name := "su_" + strings.ReplaceAll(p.ID, "-", "_")
 		fmt.Fprintf(&pf, "domain-set -name %s -file %s\n", name, filepath.Join(rd, p.ID+".txt"))
-		fmt.Fprintf(&pf, "domain-rules /domain-set:%s/ -nameserver unlock_%s -speed-check-mode none -response-mode fastest-response\n", name, group)
+		// Unlock answers can change immediately when a route fails over. Do not
+		// let SmartDNS memory/persistent/expired cache keep serving the old
+		// primary answer after switching to backup (or back again).
+		fmt.Fprintf(&pf, "domain-rules /domain-set:%s/ -nameserver unlock_%s -speed-check-mode none -response-mode fastest-response -no-cache -no-serve-expired\n", name, group)
 	}
 	if err := os.WriteFile(filepath.Join(cfg.RuntimeDir, "platforms.conf"), []byte(pf.String()), 0644); err != nil { return err }
 	if err := os.MkdirAll(filepath.Dir(cfg.SmartDNSConf), 0755); err != nil { return err }
