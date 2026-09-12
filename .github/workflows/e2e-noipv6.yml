@@ -1,0 +1,99 @@
+name: SmartUnlock no-IPv6 E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'internal/**'
+      - '.github/workflows/e2e-noipv6.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smartunlock-noipv6-e2e
+  cancel-in-progress: true
+
+jobs:
+  noipv6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+
+      - name: Build exact commit binary
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-e2e ./cmd/smartunlock
+
+      - name: Build Debian 12 systemd image
+        run: |
+          cat > /tmp/Dockerfile.smartunlock-noipv6 <<'DOCKER'
+          FROM debian:12
+          ENV container=docker DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv ca-certificates curl && rm -rf /var/lib/apt/lists/*
+          STOPSIGNAL SIGRTMIN+3
+          CMD ["/sbin/init"]
+          DOCKER
+          docker build -f /tmp/Dockerfile.smartunlock-noipv6 -t smartunlock-noipv6 /tmp
+
+      - name: Start Debian and disable IPv6 loopback
+        run: |
+          docker run -d --name smartunlock-noipv6 --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD:/src:ro" smartunlock-noipv6
+          for i in $(seq 1 30); do
+            docker exec smartunlock-noipv6 systemctl is-system-running --wait >/dev/null 2>&1 && break || true
+            sleep 1
+          done
+          docker exec smartunlock-noipv6 bash -lc '
+            set -euxo pipefail
+            cp -L /etc/resolv.conf /tmp/resolv.before
+            umount /etc/resolv.conf 2>/dev/null || true
+            cp /tmp/resolv.before /etc/resolv.conf
+            cp /etc/resolv.conf /tmp/resolv.expected
+            echo 1 > /proc/sys/net/ipv6/conf/lo/disable_ipv6
+            if test -r /proc/net/if_inet6; then
+              ! grep -q "^00000000000000000000000000000001 " /proc/net/if_inet6
+            fi
+          '
+
+      - name: Install and verify IPv4-only localhost DNS
+        run: |
+          docker exec \
+            -e SMARTUNLOCK_BINARY='/src/dist/smartunlock-e2e' \
+            -e UNLOCK_PRIMARY='https://cloudflare-dns.com/dns-query' \
+            -e UNLOCK_BACKUP='8.8.8.8' \
+            -e AUTO_NATIVE_DETECT=0 \
+            -e CHECK_INTERVAL=1m \
+            smartunlock-noipv6 bash /src/install.sh
+          docker exec smartunlock-noipv6 bash -lc '
+            set -euxo pipefail
+            systemctl is-active --quiet smartunlock.service
+            test "$(systemctl show -p NRestarts --value smartunlock.service)" = 0
+            grep -qx "bind 127.0.0.1:53" /etc/smartdns/smartdns.conf
+            ! grep -q "bind \[::1\]:53" /etc/smartdns/smartdns.conf
+            grep -qx "nameserver 127.0.0.1" /etc/resolv.conf
+            ! grep -qx "nameserver ::1" /etc/resolv.conf
+            dig @127.0.0.1 example.com A +time=5 +tries=1 +short | grep -q .
+            smartunlock health-check | tee /tmp/health.txt
+            grep -q "主=true" /tmp/health.txt
+            grep -q "备用=true" /tmp/health.txt
+          '
+
+      - name: Uninstall and verify DNS restore
+        if: always()
+        run: |
+          if docker inspect smartunlock-noipv6 >/dev/null 2>&1; then
+            if docker exec smartunlock-noipv6 test -x /usr/local/bin/smartunlock; then
+              docker exec smartunlock-noipv6 smartunlock uninstall -y || true
+              docker exec smartunlock-noipv6 bash -lc 'cmp -s /etc/resolv.conf /tmp/resolv.expected'
+            fi
+            docker exec smartunlock-noipv6 journalctl -u smartunlock.service -n 120 --no-pager 2>/dev/null || true
+            docker rm -f smartunlock-noipv6 >/dev/null 2>&1 || true
+          fi
