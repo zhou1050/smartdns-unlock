@@ -76,7 +76,7 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	case "bahamut":
 		return probeBahamutStrict(ctx)
 	case "bilibili":
-		return probeBilibili(ctx)
+		return probeBilibiliStrict(ctx)
 	case "iqiyi":
 		return probeIQIYI(ctx)
 	case "viu":
