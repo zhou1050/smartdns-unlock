@@ -58,7 +58,7 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	case "hulu":
 		return probeHulu(ctx)
 	case "spotify":
-		return probeSpotify(ctx)
+		return probeSpotifyStrict(ctx)
 	case "tiktok":
 		return probeTikTok(ctx)
 	case "dazn":
@@ -72,9 +72,9 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	case "crunchyroll":
 		return probeCrunchyroll(ctx)
 	case "abema":
-		return probeAbema(ctx)
+		return probeAbemaStrict(ctx)
 	case "bahamut":
-		return probeBahamut(ctx)
+		return probeBahamutStrict(ctx)
 	case "bilibili":
 		return probeBilibili(ctx)
 	case "iqiyi":
@@ -84,7 +84,7 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	case "tvb":
 		return probeTVB(ctx)
 	case "openai":
-		return probeOpenAI(ctx)
+		return probeOpenAIStrict(ctx)
 	case "claude":
 		return probeClaude(ctx)
 	case "copilot":
