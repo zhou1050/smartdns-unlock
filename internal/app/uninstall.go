@@ -27,12 +27,18 @@ func copyFile(src, dst string, mode os.FileMode) error {
 func marker(path string) bool { _, err := os.Stat(path); return err == nil }
 func readTrim(path string) string { b, err := os.ReadFile(path); if err != nil { return "" }; return strings.TrimSpace(string(b)) }
 func runSystemctl(args ...string) { _ = exec.Command("systemctl", args...).Run() }
+func unlockResolvConf() { _ = exec.Command("chattr", "-i", "/etc/resolv.conf").Run() }
 
 func restoreSystemDNS() error {
 	d := filepath.Join(backupRoot, "system-dns-original")
 	link := readTrim(filepath.Join(d, "resolv.link"))
 	backup := filepath.Join(d, "resolv.conf")
 	var warning error
+
+	// SmartUnlock normally makes /etc/resolv.conf immutable so DHCP clients
+	// cannot replace the local SmartDNS resolver. Remove that flag before any
+	// restore/remove operation.
+	unlockResolvConf()
 
 	switch {
 	case link != "":
