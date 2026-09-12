@@ -67,7 +67,12 @@ func main() {
 		fmt.Println("原生解锁检测完成")
 	case "check":
 		c, cancel := context.WithTimeout(ctx, 12*time.Minute); defer cancel()
-		r, e := m.PlatformCheck(c, true); if e != nil { fatal(e) }; fmt.Println(app.Summary(r))
+		r, e := m.PlatformCheck(c, true); if e != nil { fatal(e) }
+		summary := app.Summary(r)
+		fmt.Println(summary)
+		if e := app.NotifyTelegram(c, cfg, "🔍 SmartDNS 手动解锁检测\n"+summary); e != nil {
+			fmt.Fprintln(os.Stderr, "警告：Telegram 发送失败：", e)
+		}
 	case "health-check":
 		c, cancel := context.WithTimeout(ctx, 30*time.Second); defer cancel()
 		p, b, e := m.HealthCheck(c); if e != nil { fatal(e) }; fmt.Printf("主=%v 备用=%v\n", p, b)
