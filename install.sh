@@ -8,6 +8,7 @@ CONFIG_DIR=/etc/smartdns-unlock
 STATE_DIR=/var/lib/smartdns-unlock
 BIN=/usr/local/bin/smartunlock
 SERVICE=/etc/systemd/system/smartunlock.service
+SMARTDNS_MANAGED_MARKER="$CONFIG_DIR/smartdns-managed.version"
 PRIMARY="${UNLOCK_PRIMARY:-}"
 BACKUP="${UNLOCK_BACKUP:-}"
 PRIMARY_PROTO="${UNLOCK_PRIMARY_PROTO:-}"
@@ -120,18 +121,53 @@ install_binary(){
   install -m 0755 "$WORK/smartunlock" "$BIN"
 }
 
+smartdns_compatible(){
+  local v major
+  [[ -x "$(command -v smartdns 2>/dev/null || true)" ]] || return 1
+
+  # A SmartDNS binary installed by this installer has already been validated
+  # against the generated config syntax. The marker also avoids rebuilding it
+  # on every SmartUnlock upgrade.
+  if [[ -r "$SMARTDNS_MANAGED_MARKER" ]] && [[ "$(cat "$SMARTDNS_MANAGED_MARKER" 2>/dev/null || true)" == "$SMARTDNS_TAG" ]]; then
+    return 0
+  fi
+
+  v="$(smartdns -v 2>&1 | head -1 || true)"
+  # Debian 12 ships smartdns 40+dfsg-1. It starts with our generated config but
+  # cannot reliably register the modern grouped upstream/domain-rule options,
+  # which results in 'total server number 0'. Refuse known old distro releases
+  # rather than letting installation appear successful and then lose DNS.
+  if [[ "$v" =~ ^smartdns[[:space:]]+([0-9]+)\+dfsg ]]; then
+    major="${BASH_REMATCH[1]}"
+    if [[ "$major" =~ ^[0-9]+$ ]] && (( major < 48 )); then
+      return 1
+    fi
+  fi
+  return 0
+}
+
 install_smartdns(){
-  if command -v smartdns >/dev/null 2>&1 && [[ "${SMARTDNS_REINSTALL:-0}" != 1 ]]; then
-    info "沿用现有 SmartDNS：$(smartdns -v 2>&1 | head -1)"
+  local current=''
+  if command -v smartdns >/dev/null 2>&1; then
+    current="$(smartdns -v 2>&1 | head -1 || true)"
+  fi
+  if [[ -n "$current" && "${SMARTDNS_REINSTALL:-0}" != 1 ]] && smartdns_compatible; then
+    info "沿用现有 SmartDNS：$current"
     return
   fi
-  info "安装 SmartDNS $SMARTDNS_TAG"
+  if [[ -n "$current" ]]; then
+    warn "现有 SmartDNS 不满足稳定运行要求：$current；自动升级到 $SMARTDNS_TAG（原版本已备份，卸载可恢复）"
+  else
+    info "安装 SmartDNS $SMARTDNS_TAG"
+  fi
   curl -fsSL --retry 3 "https://github.com/pymumu/smartdns/archive/refs/tags/$SMARTDNS_TAG.tar.gz" -o "$WORK/smartdns.tar.gz"
   mkdir "$WORK/smartdns"
   tar -xzf "$WORK/smartdns.tar.gz" --strip-components=1 -C "$WORK/smartdns"
   make -C "$WORK/smartdns" -j"$(nproc)" >/dev/null
   make -C "$WORK/smartdns" install >/dev/null
   command -v smartdns >/dev/null 2>&1 || die 'SmartDNS 安装失败'
+  printf '%s\n' "$SMARTDNS_TAG" > "$SMARTDNS_MANAGED_MARKER"
+  info "SmartDNS 已准备：$(smartdns -v 2>&1 | head -1)"
 }
 
 detect_proto(){
