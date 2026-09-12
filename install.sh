@@ -282,12 +282,14 @@ done
 
 unlock_resolv
 rm -f /etc/resolv.conf
-cat > /etc/resolv.conf <<'RESOLV'
-# Managed by smartunlock
-nameserver 127.0.0.1
-nameserver ::1
-options timeout:2 attempts:2
-RESOLV
+{
+  echo '# Managed by smartunlock'
+  echo 'nameserver 127.0.0.1'
+  if [[ -r /proc/net/if_inet6 ]] && grep -q '^00000000000000000000000000000001 ' /proc/net/if_inet6; then
+    echo 'nameserver ::1'
+  fi
+  echo 'options timeout:2 attempts:2'
+} > /etc/resolv.conf
 chmod 0644 /etc/resolv.conf
 if chattr +i /etc/resolv.conf 2>/dev/null; then
   info '已锁定 /etc/resolv.conf，防止 DHCP 覆盖 SmartDNS'
