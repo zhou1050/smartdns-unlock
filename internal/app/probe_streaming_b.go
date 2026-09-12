@@ -9,60 +9,109 @@ import (
 	"strings"
 )
 
+func paramountProbeDecision(code int, final, body string) string {
+	low := strings.ToLower(final + " " + body)
+	if explicitGeoBlock(low) || strings.Contains(low, "/intl/") || strings.HasSuffix(strings.TrimRight(strings.ToLower(final), "/"), "/intl") {
+		return "fail"
+	}
+	if code == 403 || code == 429 || code >= 500 {
+		return "unknown"
+	}
+	if code >= 200 && code < 400 && strings.Contains(strings.ToLower(final), "paramountplus.com") {
+		return "pass"
+	}
+	return "unknown"
+}
+
 func probeParamount(ctx context.Context) ProbeResult {
-	code, final, _, err := httpGet(ctx, "https://www.paramountplus.com/", nil)
+	code, final, body, err := httpGet(ctx, "https://www.paramountplus.com/", nil)
 	if err != nil {
 		return res("unknown", "", err.Error())
 	}
-	low := strings.ToLower(final)
-	if code == 403 || code == 451 || strings.Contains(low, "intl") {
-		return res("fail", "", "Paramount+ geo blocked")
-	}
-	if code >= 200 && code < 400 {
+	switch paramountProbeDecision(code, final, body) {
+	case "fail":
+		return res("fail", "", "Paramount+ explicit international/geo block")
+	case "pass":
 		region := "US"
-		parts := strings.Split(strings.Trim(final, "/"), "/")
-		if len(parts) >= 4 && len(parts[3]) == 2 {
-			region = strings.ToUpper(parts[3])
+		if u, err := url.Parse(final); err == nil {
+			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+			if len(parts) > 0 && len(parts[0]) == 2 {
+				region = strings.ToUpper(parts[0])
+			}
 		}
-		return res("pass", region, "Paramount+ main site available")
+		return res("pass", region, "Paramount+ service page available")
+	default:
+		return res("unknown", "", fmt.Sprintf("Paramount+ HTTP %d without explicit geo decision", code))
 	}
-	return res("unknown", "", fmt.Sprintf("HTTP %d", code))
+}
+
+func peacockProbeDecision(code int, final, body string) string {
+	low := strings.ToLower(final + " " + body)
+	if explicitGeoBlock(low) || strings.Contains(low, "peacock is unavailable") || strings.Contains(low, "peacock is not available") {
+		return "fail"
+	}
+	if code == 403 || code == 429 || code >= 500 {
+		return "unknown"
+	}
+	if code >= 200 && code < 400 && strings.Contains(strings.ToLower(final), "peacocktv.com") {
+		return "pass"
+	}
+	return "unknown"
 }
 
 func probePeacock(ctx context.Context) ProbeResult {
-	code, final, _, err := httpGet(ctx, "https://www.peacocktv.com/", nil)
+	code, final, body, err := httpGet(ctx, "https://www.peacocktv.com/", nil)
 	if err != nil {
 		return res("unknown", "", err.Error())
 	}
-	low := strings.ToLower(final)
-	if code == 403 || code == 451 || strings.Contains(low, "unavailable") {
-		return res("fail", "", "Peacock unavailable")
+	switch peacockProbeDecision(code, final, body) {
+	case "fail":
+		return res("fail", "", "Peacock explicit regional unavailability")
+	case "pass":
+		return res("pass", "US", "Peacock service page available")
+	default:
+		return res("unknown", "", fmt.Sprintf("Peacock HTTP %d without explicit geo decision", code))
 	}
-	if code >= 200 && code < 400 {
-		return res("pass", "US", "Peacock main site available")
+}
+
+func crunchyrollProbeDecision(countryCode string, siteCode int, final, body string) string {
+	low := strings.ToLower(final + " " + body)
+	if explicitGeoBlock(low) || strings.Contains(low, "crunchyroll is not available") || strings.Contains(low, "service is not available in your region") {
+		return "fail"
 	}
-	return res("unknown", "", fmt.Sprintf("HTTP %d", code))
+	if siteCode == 403 || siteCode == 429 || siteCode >= 500 {
+		return "unknown"
+	}
+	if countryCode != "" && siteCode >= 200 && siteCode < 400 && strings.Contains(strings.ToLower(final), "crunchyroll.com") {
+		return "pass"
+	}
+	return "unknown"
 }
 
 func probeCrunchyroll(ctx context.Context) ProbeResult {
-	code, _, body, err := httpGet(ctx, "https://c.evidon.com/geo/country.js", nil)
+	code, _, geoBody, err := httpGet(ctx, "https://c.evidon.com/geo/country.js", nil)
 	if err != nil {
 		return res("unknown", "", err.Error())
 	}
-	if code/100 != 2 {
-		return res("unknown", "", fmt.Sprintf("HTTP %d", code))
+	region := ""
+	if code/100 == 2 {
+		re := regexp.MustCompile(`(?i)['"]code['"]\s*:\s*['"]([a-z]{2})['"]`)
+		if m := re.FindStringSubmatch(geoBody); len(m) > 1 {
+			region = strings.ToUpper(m[1])
+		}
 	}
-	// Pinned RRC treats this particular Crunchyroll probe as US-only.
-	re := regexp.MustCompile(`(?i)['"]code['"]\s*:\s*['"]([a-z]{2})['"]`)
-	m := re.FindStringSubmatch(body)
-	if len(m) < 2 {
-		return res("unknown", "", "Crunchyroll country code unavailable")
+	siteCode, final, siteBody, siteErr := httpGet(ctx, "https://www.crunchyroll.com/", map[string]string{"Accept-Language": "en-US,en;q=0.9"})
+	if siteErr != nil {
+		return res("unknown", region, siteErr.Error())
 	}
-	region := strings.ToUpper(m[1])
-	if region == "US" {
-		return res("pass", region, "Crunchyroll US available")
+	switch crunchyrollProbeDecision(region, siteCode, final, siteBody) {
+	case "fail":
+		return res("fail", region, "Crunchyroll explicit regional block")
+	case "pass":
+		return res("pass", region, "Crunchyroll service available in detected region")
+	default:
+		return res("unknown", region, fmt.Sprintf("Crunchyroll HTTP %d without explicit geo decision", siteCode))
 	}
-	return res("fail", region, "Crunchyroll US unavailable")
 }
 
 func probeIQIYI(ctx context.Context) ProbeResult {
@@ -101,39 +150,52 @@ func probeIQIYI(ctx context.Context) ProbeResult {
 	return res("pass", region, "iQIYI overseas mode available")
 }
 
+func viuRegion(final string) string {
+	u, err := url.Parse(final)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) >= 2 && strings.EqualFold(parts[0], "ott") {
+		return strings.ToUpper(parts[1])
+	}
+	if len(parts) > 0 {
+		return strings.ToUpper(parts[0])
+	}
+	return ""
+}
+
+func viuProbeDecision(code int, final, body string) (string, string) {
+	region := viuRegion(final)
+	if region == "NO-SERVICE" {
+		return "fail", ""
+	}
+	if explicitGeoBlock(final + " " + body) {
+		return "fail", region
+	}
+	if code == 403 || code == 429 || code >= 500 {
+		return "unknown", region
+	}
+	if region != "" && code >= 200 && code < 400 {
+		return "pass", region
+	}
+	return "unknown", region
+}
+
 func probeViu(ctx context.Context) ProbeResult {
-	code, final, _, err := httpGet(ctx, "https://www.viu.com/", nil)
+	code, final, body, err := httpGet(ctx, "https://www.viu.com/", nil)
 	if err != nil {
 		return res("unknown", "", err.Error())
 	}
-	if code == 403 || code == 451 {
-		return res("fail", "", fmt.Sprintf("HTTP %d", code))
+	status, region := viuProbeDecision(code, final, body)
+	switch status {
+	case "fail":
+		return res("fail", region, "Viu explicit no-service/geo block")
+	case "pass":
+		return res("pass", region, "Viu service region available")
+	default:
+		return res("unknown", region, fmt.Sprintf("Viu HTTP %d without explicit geo decision", code))
 	}
-	_, _, banBody, banErr := httpGet(ctx, "https://d3o7oi00quuwqu.cloudfront.net", nil)
-	if banErr != nil {
-		return res("unknown", "", banErr.Error())
-	}
-	u, err := url.Parse(final)
-	if err != nil {
-		return res("unknown", "", "invalid Viu redirect")
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	region := ""
-	if len(parts) >= 2 && strings.EqualFold(parts[0], "ott") {
-		region = strings.ToUpper(parts[1])
-	} else if len(parts) > 0 {
-		region = strings.ToUpper(parts[0])
-	}
-	if region == "" {
-		return res("unknown", "", "Viu region unavailable")
-	}
-	if region == "NO-SERVICE" {
-		return res("fail", "", "Viu no-service region")
-	}
-	if strings.Contains(strings.ToLower(banBody), "block access") {
-		return res("fail", region, "Viu CDN blocks access")
-	}
-	return res("pass", region, "Viu region available")
 }
 
 func probeTVB(ctx context.Context) ProbeResult {
