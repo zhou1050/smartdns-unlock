@@ -84,7 +84,7 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	case "tvb":
 		return probeTVB(ctx)
 	case "openai":
-		return probeOpenAIStrict(ctx)
+		return probeOpenAI(ctx)
 	case "claude":
 		return probeClaude(ctx)
 	case "copilot":
@@ -219,46 +219,130 @@ func probeBilibili(ctx context.Context) ProbeResult {
 	return res("unknown", "", "unexpected Bilibili response")
 }
 
-func probeOpenAI(ctx context.Context) ProbeResult {
-	code, _, body, err := httpGet(ctx, "https://ios.chat.openai.com", nil)
-	if err != nil {
-		return res("unknown", "", err.Error())
-	}
-	if code == 403 || code == 451 {
-		return res("fail", "", fmt.Sprintf("HTTP %d", code))
-	}
-	low := strings.ToLower(body)
-	if strings.Contains(low, "unsupported_country") || strings.Contains(low, "disallowed") || strings.Contains(low, "not available in your country") {
-		return res("fail", "", "OpenAI region/ISP denied")
-	}
-	region := ""
-	var v map[string]any
-	if json.Unmarshal([]byte(body), &v) == nil {
-		if cf, ok := v["cf_details"].(map[string]any); ok {
-			if c, ok := cf["country"].(string); ok {
-				region = c
-			}
+func traceRegion(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "loc=") {
+			return strings.ToUpper(strings.TrimSpace(strings.TrimPrefix(line, "loc=")))
 		}
 	}
-	if code/100 == 2 || code == 404 {
-		return res("pass", region, "OpenAI endpoint reachable")
+	return ""
+}
+
+func openAIExplicitBlock(body string) bool {
+	low := strings.ToLower(body)
+	for _, marker := range []string{
+		"unsupported_country_region_territory",
+		"unsupported_country",
+		"country, region, or territory not supported",
+		"blocked_why_headline",
+		"not available in your country",
+	} {
+		if strings.Contains(low, marker) {
+			return true
+		}
 	}
-	return res("unknown", region, fmt.Sprintf("HTTP %d", code))
+	return false
+}
+
+func openAIProbeDecision(apiCode int, apiBody string, iosCode int, iosBody string) string {
+	apiBlocked := openAIExplicitBlock(apiBody)
+	iosBlocked := openAIExplicitBlock(iosBody)
+	if apiBlocked && iosBlocked {
+		return "fail"
+	}
+	apiPositive := apiCode > 0 && apiCode < 500 && strings.TrimSpace(apiBody) != "" && !apiBlocked
+	iosPositive := (iosCode >= 200 && iosCode < 400 || iosCode == 404) && strings.TrimSpace(iosBody) != "" && !iosBlocked
+	if apiPositive || iosPositive {
+		return "pass"
+	}
+	if apiBlocked || iosBlocked {
+		return "unknown"
+	}
+	return "unknown"
+}
+
+func probeOpenAI(ctx context.Context) ProbeResult {
+	apiHeaders := map[string]string{
+		"Accept":        "*/*",
+		"Authorization": "Bearer null",
+		"Content-Type":  "application/json",
+		"Origin":        "https://platform.openai.com",
+		"Referer":       "https://platform.openai.com/",
+	}
+	apiCode, _, apiBody, apiErr := httpGet(ctx, "https://api.openai.com/compliance/cookie_requirements", apiHeaders)
+	iosCode, _, iosBody, iosErr := httpGet(ctx, "https://ios.chat.openai.com/", map[string]string{"Accept-Language": "en-US,en;q=0.9"})
+	_, _, traceBody, _ := httpGet(ctx, "https://chatgpt.com/cdn-cgi/trace", nil)
+	region := traceRegion(traceBody)
+
+	decision := openAIProbeDecision(apiCode, apiBody, iosCode, iosBody)
+	switch decision {
+	case "pass":
+		detail := "OpenAI multi-endpoint capability available"
+		if openAIExplicitBlock(iosBody) {
+			detail = "OpenAI web/API available; iOS probe reports regional block"
+		}
+		return res("pass", region, detail)
+	case "fail":
+		return res("fail", region, "OpenAI region blocked by multiple endpoints")
+	}
+	if apiErr != nil && iosErr != nil {
+		return res("unknown", region, "OpenAI probe endpoints unreachable")
+	}
+	if openAIExplicitBlock(apiBody) || openAIExplicitBlock(iosBody) {
+		return res("unknown", region, "OpenAI endpoints disagree on regional availability")
+	}
+	return res("unknown", region, fmt.Sprintf("OpenAI inconclusive api=%d ios=%d", apiCode, iosCode))
+}
+
+func claudeExplicitBlock(text string) bool {
+	low := strings.ToLower(text)
+	for _, marker := range []string{
+		"unsupported-country",
+		"unsupported_country",
+		"country is not supported",
+		"not available in your country",
+		"not available in your region",
+		"claude is not available in your country",
+		"claude is not available in your region",
+	} {
+		if strings.Contains(low, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeProbeDecision(code int, final, body, region string) string {
+	if claudeExplicitBlock(final + " " + body) {
+		return "fail"
+	}
+	if code >= 200 && code < 400 && strings.Contains(strings.ToLower(final), "claude.ai") {
+		return "pass"
+	}
+	if (code == 403 || code == 429) && region != "" && strings.Contains(strings.ToLower(final), "claude.ai") {
+		return "pass"
+	}
+	return "unknown"
 }
 
 func probeClaude(ctx context.Context) ProbeResult {
-	code, final, body, err := httpGet(ctx, "https://claude.ai/", nil)
+	code, final, body, err := httpGet(ctx, "https://claude.ai/", map[string]string{"Accept-Language": "en-US,en;q=0.9"})
+	_, _, traceBody, _ := httpGet(ctx, "https://claude.ai/cdn-cgi/trace", nil)
+	region := traceRegion(traceBody)
 	if err != nil {
-		return res("unknown", "", err.Error())
+		return res("unknown", region, err.Error())
 	}
-	low := strings.ToLower(final + " " + body)
-	if strings.Contains(low, "unavailable") || code == 403 || code == 451 {
-		return res("fail", "", "Claude unavailable")
+	switch claudeProbeDecision(code, final, body, region) {
+	case "fail":
+		return res("fail", region, "Claude explicit region block")
+	case "pass":
+		if code == 403 || code == 429 {
+			return res("pass", region, fmt.Sprintf("Claude route reachable; HTTP %d treated as anti-bot/rate-limit", code))
+		}
+		return res("pass", region, "Claude site reachable without region block")
+	default:
+		return res("unknown", region, fmt.Sprintf("Claude HTTP %d without explicit geo decision", code))
 	}
-	if code >= 200 && code < 500 {
-		return res("pass", "", "Claude reachable")
-	}
-	return res("unknown", "", fmt.Sprintf("HTTP %d", code))
 }
 
 func probeCopilot(ctx context.Context) ProbeResult {
