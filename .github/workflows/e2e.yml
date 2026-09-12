@@ -130,6 +130,32 @@ jobs:
             sleep 3
             smartunlock health-check | grep -q "备用=true"
             smartunlock on netflix primary
+            sleep 1
+          '
+
+      - name: Inject total unlock DNS outage and verify public fallback
+        run: |
+          docker exec smartunlock-e2e bash -lc '
+            set -euxo pipefail
+            sed -i "s|^UNLOCK_PRIMARY=.*|UNLOCK_PRIMARY=https://127.0.0.1:9/dns-query|" /etc/smartdns-unlock/config.env
+            sed -i "s|^UNLOCK_BACKUP=.*|UNLOCK_BACKUP=https://127.0.0.1:9/dns-query|" /etc/smartdns-unlock/config.env
+            systemctl kill --kill-whom=main -s HUP smartunlock.service
+            sleep 3
+            smartunlock health-check | tee /tmp/health-both-down.txt
+            grep -q "主=false" /tmp/health-both-down.txt
+            grep -q "备用=false" /tmp/health-both-down.txt
+            sleep 2
+            ! grep -q -- "-nameserver unlock_" /run/smartdns-unlock/platforms.conf
+            dig @127.0.0.1 netflix.com A +time=5 +tries=1 +short | grep -q .
+            sed -i "s|^UNLOCK_PRIMARY=.*|UNLOCK_PRIMARY=https://cloudflare-dns.com/dns-query|" /etc/smartdns-unlock/config.env
+            sed -i "s|^UNLOCK_BACKUP=.*|UNLOCK_BACKUP=https://dns.google/dns-query|" /etc/smartdns-unlock/config.env
+            systemctl kill --kill-whom=main -s HUP smartunlock.service
+            sleep 3
+            smartunlock health-check | tee /tmp/health-both-restored.txt
+            grep -q "主=true" /tmp/health-both-restored.txt
+            grep -q "备用=true" /tmp/health-both-restored.txt
+            sleep 2
+            grep -q -- "-nameserver unlock_primary" /run/smartdns-unlock/platforms.conf
           '
 
       - name: Capture logs and uninstall
@@ -156,7 +182,7 @@ jobs:
         if: always()
         run: |
           echo '===== smartunlock journal ====='
-          tail -n 200 smartunlock-journal.txt 2>/dev/null || true
+          tail -n 240 smartunlock-journal.txt 2>/dev/null || true
           echo '===== smartdns log ====='
-          tail -n 200 smartdns.log 2>/dev/null || true
+          tail -n 240 smartdns.log 2>/dev/null || true
           docker rm -f smartunlock-e2e >/dev/null 2>&1 || true
