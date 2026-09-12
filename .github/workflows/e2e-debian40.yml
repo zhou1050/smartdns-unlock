@@ -1,0 +1,106 @@
+name: SmartUnlock Debian 12 SmartDNS 40 E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'internal/**'
+      - 'cmd/**'
+      - '.github/workflows/e2e-debian40.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smartunlock-debian40-e2e
+  cancel-in-progress: true
+
+jobs:
+  debian40:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+
+      - name: Build exact commit binary
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-e2e ./cmd/smartunlock
+
+      - name: Build Debian 12 image with distro SmartDNS
+        run: |
+          cat > /tmp/Dockerfile.smartunlock-debian40 <<'DOCKER'
+          FROM debian:12
+          ENV container=docker DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv ca-certificates curl smartdns && rm -rf /var/lib/apt/lists/*
+          STOPSIGNAL SIGRTMIN+3
+          CMD ["/sbin/init"]
+          DOCKER
+          docker build -f /tmp/Dockerfile.smartunlock-debian40 -t smartunlock-debian40 /tmp
+
+      - name: Start Debian 12 and snapshot preexisting state
+        run: |
+          docker run -d --name smartunlock-debian40 --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD:/src:ro" smartunlock-debian40
+          for i in $(seq 1 30); do
+            docker exec smartunlock-debian40 systemctl is-system-running --wait >/dev/null 2>&1 && break || true
+            sleep 1
+          done
+          docker exec smartunlock-debian40 bash -lc '
+            set -euxo pipefail
+            cp -L /etc/resolv.conf /tmp/resolv.before
+            umount /etc/resolv.conf 2>/dev/null || true
+            cp /tmp/resolv.before /etc/resolv.conf
+            cp /etc/resolv.conf /tmp/resolv.expected
+            smartdns -v | tee /tmp/smartdns.version.before
+            grep -Eq "smartdns 4[0-7]\\+dfsg" /tmp/smartdns.version.before
+            cp -a "$(command -v smartdns)" /tmp/smartdns.bin.before
+            cp -a /etc/smartdns/smartdns.conf /tmp/smartdns.conf.before
+          '
+
+      - name: Install and verify old SmartDNS is upgraded
+        run: |
+          docker exec \
+            -e SMARTUNLOCK_BINARY='/src/dist/smartunlock-e2e' \
+            -e UNLOCK_PRIMARY='https://cloudflare-dns.com/dns-query' \
+            -e UNLOCK_BACKUP='8.8.8.8' \
+            -e AUTO_NATIVE_DETECT=1 \
+            -e CHECK_INTERVAL=1m \
+            smartunlock-debian40 bash /src/install.sh
+          docker exec smartunlock-debian40 bash -lc '
+            set -euxo pipefail
+            systemctl is-active --quiet smartunlock.service
+            smartdns -v | tee /tmp/smartdns.version.after
+            ! grep -Eq "smartdns 4[0-7]\\+dfsg" /tmp/smartdns.version.after
+            grep -qx "Release48.4" /etc/smartdns-unlock/smartdns-managed.version
+            test "$(awk "/^nameserver/{print \$2; exit}" /etc/resolv.conf)" = 127.0.0.1
+            dig @127.0.0.1 example.com A +time=5 +tries=1 +short | grep -q .
+            smartunlock health-check | tee /tmp/health.txt
+            grep -q "主=true" /tmp/health.txt
+            grep -q "备用=true" /tmp/health.txt
+          '
+
+      - name: Uninstall and verify original SmartDNS restored
+        run: |
+          docker exec smartunlock-debian40 smartunlock uninstall -y
+          docker exec smartunlock-debian40 bash -lc '
+            set -euxo pipefail
+            test ! -e /usr/local/bin/smartunlock
+            command -v smartdns
+            cmp -s "$(command -v smartdns)" /tmp/smartdns.bin.before
+            cmp -s /etc/smartdns/smartdns.conf /tmp/smartdns.conf.before
+            smartdns -v | grep -Eq "smartdns 4[0-7]\\+dfsg"
+            cmp -s /etc/resolv.conf /tmp/resolv.expected
+          '
+
+      - name: Show logs
+        if: always()
+        run: |
+          docker exec smartunlock-debian40 journalctl -u smartunlock.service -n 160 --no-pager 2>/dev/null || true
+          docker rm -f smartunlock-debian40 >/dev/null 2>&1 || true
