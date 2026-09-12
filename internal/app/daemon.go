@@ -129,6 +129,9 @@ func RunDaemon(ctx context.Context, cfg Config) error {
 		if e := m.Apply(true); e != nil {
 			log.Printf("reload apply: %v", e)
 		} else {
+			if e := writeReloadAck(cfg); e != nil {
+				log.Printf("reload acknowledgement: %v", e)
+			}
 			log.Printf("configuration reloaded and schedules reset")
 		}
 	}
