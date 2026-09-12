@@ -5,15 +5,17 @@ Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务器端采
 ## 功能
 
 - 39 个影视 / AI 平台域名规则。
+- 内置 22 个平台能力探针；只有拿到明确可用结果才允许原生直出，其余结果保守走解锁 DNS。
 - 主、备用解锁 DNS，支持 UDP、TCP、DoT、DoH、DoQ、DoH3。
 - 安装时先检测服务器原生解锁能力，**明确原生可用才保持本地直出**；失败或无法可靠判断的平台默认走解锁 DNS。
 - 每天按服务器当前最终配置做综合解锁复检，不刻意绕过已经配置的解锁 DNS。
 - 主 DNS 网络故障时自动使用备用；主 DNS 虽然能解析但平台实际仍失败时，会实测备用线路，备用可用则该平台切备用。
 - 主备都不能实际解锁时保留失败状态并 Telegram 报警，不伪装成功。
 - 每天自动同步 GitHub 规则；新规则应用失败不会影响已有规则缓存。
+- 多个 CLI 配置变更在短时间连续发生时自动合并重载，避免 SmartDNS 重启风暴和 DNS 短暂断流。
 - 内置安全卸载：恢复安装前系统 DNS；服务器原本已有 SmartDNS 时恢复原 SmartDNS，而不是删除它。
 
-> 平台“原生优先”只使用程序内能够可靠判断可用性的探针。没有可靠探针的平台不会因为网页能打开就判定为原生解锁，而是保守使用解锁 DNS。
+> 当前 22 个探针对应 Netflix、Disney+、YouTube、Prime Video、Max、Hulu、Spotify、TikTok、DAZN、BBC iPlayer、Paramount+、Peacock、Crunchyroll、ABEMA、Bahamut、Bilibili、iQIYI、Viu、TVB、ChatGPT/OpenAI、Claude 和 Microsoft Copilot。部分站点没有稳定公开的无认证检测接口，因此程序采用“宁可 unknown、不误判 pass”的策略；`unknown` 不会自动切成原生直出。
 
 ## 一键安装
 
@@ -33,6 +35,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/mai
 
 安装器优先下载 GitHub `edge` Release 中的静态二进制；如果预编译文件暂时不可用，才使用源码编译兜底。`amd64` / `arm64` 均支持。
 
+`SMARTUNLOCK_BINARY=/path/to/smartunlock` 可用于测试、离线部署或固定版本部署，让安装器直接安装指定的本地二进制；普通用户无需设置。
+
 ## 自动逻辑
 
 安装时先在服务器原来的 DNS / 网络环境执行一次 `native-scan`，再启动 SmartDNS 并接管系统 DNS。因此原生检测不会被新配置的解锁 DNS 干扰。
@@ -43,6 +47,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/zhou1050/smartdns-unlock/mai
 - `RULE_UPDATE_TIME`：每天同步规则，默认 `05:17`。
 - `PLATFORM_CHECK_TIME`：每天综合平台复检和自动修复，默认 `06:17`。
 - `TG_REPORT_TIME`：Telegram 日报，默认 `09:00`。
+
+平台检测最多 4 路并发，每个平台有独立超时，不会因为单个平台接口长时间无响应拖死整个 daemon。
 
 这些任务**不再创建 4 套 systemd timer/service**。
 
@@ -141,10 +147,20 @@ AUTO_NATIVE_DETECT=true
 改完配置后执行：
 
 ```bash
-systemctl kill -s HUP smartunlock
+systemctl kill --kill-whom=main -s HUP smartunlock.service
 ```
 
-程序会重新读取配置并重建 SmartDNS 运行配置。
+必须只把 HUP 发给 Go daemon 主进程；不要对整个 `smartunlock.service` cgroup 发送 HUP，否则 SmartDNS 子进程也会收到信号。程序会对短时间连续 HUP 做合并，然后重新读取配置、重排定时任务并有序重建 SmartDNS 运行配置。
+
+## 测试
+
+仓库持续执行三类验证：
+
+- Go 单元测试及静态 `amd64` / `arm64` 编译。
+- `go test -race` + 3 分钟 daemon 故障注入 soak test，观察主备切换、goroutine、RSS 和子进程退出。
+- 干净 Debian 12 + systemd 端到端测试：安装真实 SmartDNS、原生扫描、系统 DNS 接管、CLI 连续变更、完整健康周期、主/备故障注入、恢复和卸载回滚。
+
+Debian E2E 会先从当前 commit 编译二进制，再通过 `SMARTUNLOCK_BINARY` 安装该精确版本，不依赖 rolling `edge` 的发布时间顺序。
 
 ## 说明
 
