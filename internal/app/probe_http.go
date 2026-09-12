@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+func closeProbeIdleConnections() {
+	if tr, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr.CloseIdleConnections()
+	}
+}
+
 func probeRequest(ctx context.Context, method, rawURL string, headers map[string]string, body string) (int, string, http.Header, string, error) {
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, strings.NewReader(body))
 	if err != nil {
