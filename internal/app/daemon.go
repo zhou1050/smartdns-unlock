@@ -66,7 +66,7 @@ func RunDaemon(ctx context.Context, cfg Config) error {
 	defer m.DNS.Stop()
 	_, _, _ = m.HealthCheck(ctx)
 
-	sig := make(chan os.Signal, 2)
+	sig := make(chan os.Signal, 16)
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(sig)
 	health := time.NewTicker(cfg.CheckInterval)
@@ -78,46 +78,73 @@ func RunDaemon(ctx context.Context, cfg Config) error {
 	reportTimer := time.NewTimer(time.Until(nextClock(time.Now(), cfg.TGReportTime)))
 	defer reportTimer.Stop()
 
+	// CLI operations can arrive back-to-back (update/on/off/on). Restarting
+	// SmartDNS for every HUP creates a short DNS outage. Coalesce a burst into
+	// one reload/restart after a small quiet window.
+	var reloadTimer *time.Timer
+	var reloadC <-chan time.Time
+	queueReload := func() {
+		const debounce = 500 * time.Millisecond
+		if reloadTimer == nil {
+			reloadTimer = time.NewTimer(debounce)
+		} else {
+			resetTimer(reloadTimer, debounce)
+		}
+		reloadC = reloadTimer.C
+	}
+	defer func() {
+		if reloadTimer != nil {
+			reloadTimer.Stop()
+		}
+	}()
+
+	reload := func() {
+		nc, e := LoadConfig(cfg.ConfigPath)
+		if e != nil {
+			log.Printf("reload config: %v", e)
+			return
+		}
+		if e = nc.Validate(); e != nil {
+			log.Printf("reload config rejected: %v", e)
+			return
+		}
+		cfg = nc
+		m.Cfg = nc
+		m.DNS.SetConfig(nc)
+		if st, e := LoadState(cfg.StatePath); e == nil {
+			m.Mu.Lock()
+			m.State = st
+			m.Mu.Unlock()
+		}
+		if rr, e := LoadRules(cfg.RulesPath); e == nil {
+			m.Mu.Lock()
+			m.Rules = rr
+			m.Mu.Unlock()
+		}
+		health.Reset(cfg.CheckInterval)
+		resetTimer(ruleTimer, time.Until(nextClock(time.Now(), cfg.RuleUpdateTime)))
+		resetTimer(platformTimer, time.Until(nextClock(time.Now(), cfg.PlatformCheckTime)))
+		resetTimer(reportTimer, time.Until(nextClock(time.Now(), cfg.TGReportTime)))
+		if e := m.Apply(true); e != nil {
+			log.Printf("reload apply: %v", e)
+		} else {
+			log.Printf("configuration reloaded and schedules reset")
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case s := <-sig:
 			if s == syscall.SIGHUP {
-				nc, e := LoadConfig(cfg.ConfigPath)
-				if e != nil {
-					log.Printf("reload config: %v", e)
-					continue
-				}
-				if e = nc.Validate(); e != nil {
-					log.Printf("reload config rejected: %v", e)
-					continue
-				}
-				cfg = nc
-				m.Cfg = nc
-				m.DNS.SetConfig(nc)
-				if st, e := LoadState(cfg.StatePath); e == nil {
-					m.Mu.Lock()
-					m.State = st
-					m.Mu.Unlock()
-				}
-				if rr, e := LoadRules(cfg.RulesPath); e == nil {
-					m.Mu.Lock()
-					m.Rules = rr
-					m.Mu.Unlock()
-				}
-				health.Reset(cfg.CheckInterval)
-				resetTimer(ruleTimer, time.Until(nextClock(time.Now(), cfg.RuleUpdateTime)))
-				resetTimer(platformTimer, time.Until(nextClock(time.Now(), cfg.PlatformCheckTime)))
-				resetTimer(reportTimer, time.Until(nextClock(time.Now(), cfg.TGReportTime)))
-				if e := m.Apply(true); e != nil {
-					log.Printf("reload apply: %v", e)
-				} else {
-					log.Printf("configuration reloaded and schedules reset")
-				}
+				queueReload()
 				continue
 			}
 			return nil
+		case <-reloadC:
+			reloadC = nil
+			reload()
 		case <-health.C:
 			c, cancel := context.WithTimeout(ctx, 12*time.Second)
 			_, _, _ = m.HealthCheck(c)
