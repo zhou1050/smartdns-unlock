@@ -27,6 +27,7 @@ DNS_OK=0
 info(){ printf '\033[1;32m[SmartUnlock]\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;33m[SmartUnlock]\033[0m %s\n' "$*" >&2; }
 die(){ printf '\033[1;31m[SmartUnlock]\033[0m %s\n' "$*" >&2; exit 1; }
+unlock_resolv(){ chattr -i /etc/resolv.conf >/dev/null 2>&1 || true; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die '请使用 sudo -E bash 运行'
 [[ -r /etc/os-release ]] || die '无法识别系统'
 # shellcheck disable=SC1091
@@ -36,8 +37,9 @@ source /etc/os-release
 cleanup(){
   local rc=$?
   if [[ $DNS_PREPARED == 1 && $DNS_OK != 1 ]]; then
-    warn '安装未完成，恢复原系统 DNS'
+    warn '安装未完成，恢复本次安装前 DNS'
     systemctl disable --now smartunlock.service >/dev/null 2>&1 || true
+    unlock_resolv
     if [[ -f "$WORK/resolv.link" ]]; then
       rm -f /etc/resolv.conf; ln -s "$(cat "$WORK/resolv.link")" /etc/resolv.conf
     elif [[ -f "$WORK/resolv.conf" ]]; then
@@ -53,7 +55,7 @@ trap cleanup EXIT
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl tar gzip build-essential libssl-dev pkg-config dnsutils >/dev/null
+apt-get install -y -qq ca-certificates curl tar gzip build-essential libssl-dev pkg-config dnsutils e2fsprogs >/dev/null
 install -d -m 0755 "$CONFIG_DIR" "$STATE_DIR"
 
 case "$(uname -m)" in
@@ -166,17 +168,31 @@ CFG
 }
 
 backup_dns(){
-  install -d -m 0700 "$CONFIG_DIR/backups/system-dns-original"
+  local d="$CONFIG_DIR/backups/system-dns-original"
+  install -d -m 0700 "$d"
+
+  # Always keep a temporary copy so a failed reinstall can roll back to the
+  # state that existed immediately before this run.
   if [[ -L /etc/resolv.conf ]]; then
     readlink /etc/resolv.conf > "$WORK/resolv.link"
-    readlink /etc/resolv.conf > "$CONFIG_DIR/backups/system-dns-original/resolv.link"
-    cp -L /etc/resolv.conf "$CONFIG_DIR/backups/system-dns-original/resolv.conf" 2>/dev/null || true
   elif [[ -f /etc/resolv.conf ]]; then
     cp -a /etc/resolv.conf "$WORK/resolv.conf"
-    cp -a /etc/resolv.conf "$CONFIG_DIR/backups/system-dns-original/resolv.conf"
   fi
-  systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null && { touch "$WORK/resolved.enabled"; touch "$CONFIG_DIR/backups/system-dns-original/resolved.enabled"; } || true
-  systemctl is-active --quiet systemd-resolved.service 2>/dev/null && { touch "$WORK/resolved.active"; touch "$CONFIG_DIR/backups/system-dns-original/resolved.active"; } || true
+  systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null && touch "$WORK/resolved.enabled" || true
+  systemctl is-active --quiet systemd-resolved.service 2>/dev/null && touch "$WORK/resolved.active" || true
+
+  # Persistent restore data is first-install-only. Never overwrite the real
+  # pre-SmartUnlock DNS backup during an upgrade/reinstall.
+  if [[ ! -e "$d/resolv.link" && ! -e "$d/resolv.conf" ]]; then
+    if [[ -L /etc/resolv.conf ]]; then
+      readlink /etc/resolv.conf > "$d/resolv.link"
+      cp -L /etc/resolv.conf "$d/resolv.conf" 2>/dev/null || true
+    elif [[ -f /etc/resolv.conf ]]; then
+      cp -a /etc/resolv.conf "$d/resolv.conf"
+    fi
+    systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null && touch "$d/resolved.enabled" || true
+    systemctl is-active --quiet systemd-resolved.service 2>/dev/null && touch "$d/resolved.active" || true
+  fi
   return 0
 }
 
@@ -227,6 +243,7 @@ for _ in $(seq 1 45); do
 done
 [[ $ok == 1 ]] || { journalctl -u smartunlock.service -n 80 --no-pager >&2 || true; die 'SmartDNS 本机查询验证失败'; }
 
+unlock_resolv
 rm -f /etc/resolv.conf
 cat > /etc/resolv.conf <<'RESOLV'
 # Managed by smartunlock
@@ -235,6 +252,11 @@ nameserver ::1
 options timeout:2 attempts:2
 RESOLV
 chmod 0644 /etc/resolv.conf
+if chattr +i /etc/resolv.conf 2>/dev/null; then
+  info '已锁定 /etc/resolv.conf，防止 DHCP 覆盖 SmartDNS'
+else
+  warn '当前文件系统不支持锁定 /etc/resolv.conf；DNS 仍已接管，但 DHCP 可能再次覆盖'
+fi
 getent ahostsv4 github.com >/dev/null 2>&1 || die '系统 DNS 接管验证失败'
 DNS_OK=1
 
