@@ -35,23 +35,15 @@ func validDNSResponse(b []byte, id uint16) bool {
 	return binary.BigEndian.Uint16(b[6:8]) > 0
 }
 
-// CheckDNSListener performs an actual DNS A query through a loopback SmartDNS
-// listener that is pinned to one upstream group. This verifies DNS resolution,
-// not just socket reachability, and therefore works for UDP/TCP/DoT/DoH/DoQ/DoH3
-// without reimplementing every upstream transport in Go.
-func CheckDNSListener(ctx context.Context, addr string) bool {
-	if addr == "" {
-		return false
-	}
-	id := uint16(time.Now().UnixNano())
+func checkDNSListenerOnce(ctx context.Context, addr string, timeout time.Duration, id uint16) bool {
 	q := dnsQueryPacket("example.com", id)
-	d := net.Dialer{Timeout: 2 * time.Second}
+	d := net.Dialer{Timeout: time.Second}
 	c, err := d.DialContext(ctx, "udp", addr)
 	if err != nil {
 		return false
 	}
 	defer c.Close()
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(timeout)
 	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
 		deadline = dl
 	}
@@ -62,4 +54,36 @@ func CheckDNSListener(ctx context.Context, addr string) bool {
 	buf := make([]byte, 4096)
 	n, err := c.Read(buf)
 	return err == nil && validDNSResponse(buf[:n], id)
+}
+
+// CheckDNSListener performs actual DNS A queries through a loopback SmartDNS
+// listener pinned to one upstream group. A single transient SERVFAIL/timeout is
+// not enough to mark an upstream unhealthy: SmartDNS may still be warming a
+// TLS/HTTP/QUIC connection just after a reload. Three bounded attempts keep
+// failover responsive while avoiding route flapping on one lost query.
+func CheckDNSListener(ctx context.Context, addr string) bool {
+	if addr == "" {
+		return false
+	}
+	const attempts = 3
+	const perAttempt = 2 * time.Second
+	for i := 0; i < attempts; i++ {
+		if ctx.Err() != nil {
+			return false
+		}
+		id := uint16(time.Now().UnixNano()) + uint16(i)
+		if checkDNSListenerOnce(ctx, addr, perAttempt, id) {
+			return true
+		}
+		if i+1 < attempts {
+			t := time.NewTimer(200 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return false
+			case <-t.C:
+			}
+		}
+	}
+	return false
 }
