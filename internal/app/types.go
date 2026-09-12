@@ -10,13 +10,13 @@ type Platform struct {
 }
 
 var Platforms = []Platform{
-	{"netflix", "Netflix", "streaming", "netflix"}, {"disney", "Disney+", "streaming", ""}, {"youtube", "YouTube", "streaming", "youtube"},
-	{"primevideo", "Prime Video", "streaming", ""}, {"max", "Max / HBO Max", "streaming", ""}, {"hulu", "Hulu", "streaming", ""},
-	{"appletv", "Apple TV+", "streaming", ""}, {"spotify", "Spotify", "streaming", "spotify"}, {"tiktok", "TikTok", "streaming", ""},
-	{"dazn", "DAZN", "streaming", ""}, {"bbciplayer", "BBC iPlayer", "streaming", "bbc"}, {"paramount", "Paramount+", "streaming", ""},
-	{"peacock", "Peacock", "streaming", ""}, {"crunchyroll", "Crunchyroll", "streaming", ""}, {"abema", "ABEMA", "streaming", "abema"},
-	{"bahamut", "Bahamut Anime", "streaming", "bahamut"}, {"bilibili", "Bilibili", "streaming", "bilibili"}, {"iqiyi", "iQIYI", "streaming", ""},
-	{"viu", "Viu", "streaming", ""}, {"tvb", "TVB", "streaming", ""},
+	{"netflix", "Netflix", "streaming", "netflix"}, {"disney", "Disney+", "streaming", "disney"}, {"youtube", "YouTube", "streaming", "youtube"},
+	{"primevideo", "Prime Video", "streaming", "primevideo"}, {"max", "Max / HBO Max", "streaming", "max"}, {"hulu", "Hulu", "streaming", "hulu"},
+	{"appletv", "Apple TV+", "streaming", ""}, {"spotify", "Spotify", "streaming", "spotify"}, {"tiktok", "TikTok", "streaming", "tiktok"},
+	{"dazn", "DAZN", "streaming", "dazn"}, {"bbciplayer", "BBC iPlayer", "streaming", "bbc"}, {"paramount", "Paramount+", "streaming", "paramount"},
+	{"peacock", "Peacock", "streaming", "peacock"}, {"crunchyroll", "Crunchyroll", "streaming", "crunchyroll"}, {"abema", "ABEMA", "streaming", "abema"},
+	{"bahamut", "Bahamut Anime", "streaming", "bahamut"}, {"bilibili", "Bilibili", "streaming", "bilibili"}, {"iqiyi", "iQIYI", "streaming", "iqiyi"},
+	{"viu", "Viu", "streaming", "viu"}, {"tvb", "TVB", "streaming", "tvb"},
 	{"openai", "ChatGPT / OpenAI", "ai", "openai"}, {"claude", "Claude", "ai", "claude"}, {"gemini", "Google Gemini", "ai", ""},
 	{"githubcopilot", "GitHub Copilot", "ai", ""}, {"microsoftcopilot", "Microsoft Copilot", "ai", "copilot"}, {"perplexity", "Perplexity", "ai", ""},
 	{"grok", "Grok / xAI", "ai", ""}, {"poe", "Poe", "ai", ""}, {"midjourney", "Midjourney", "ai", ""}, {"suno", "Suno", "ai", ""},
