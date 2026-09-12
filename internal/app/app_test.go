@@ -70,6 +70,14 @@ func TestOnlyPrimaryDownFallsBackToDefaultDNS(t *testing.T) {
 	if strings.Contains(string(b), "su_openai") { t.Fatalf("dead sole unlock route should be omitted: %s", string(b)) }
 }
 
+func dnsTestReply(q []byte) []byte {
+	out := append([]byte(nil), q...)
+	binary.BigEndian.PutUint16(out[2:4], 0x8180)
+	binary.BigEndian.PutUint16(out[6:8], 1)
+	ans := []byte{0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04, 0x5d, 0xb8, 0xd8, 0x22}
+	return append(out, ans...)
+}
+
 func startTestDNS(t *testing.T) (string, func()) {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
@@ -84,11 +92,31 @@ func startTestDNS(t *testing.T) (string, func()) {
 				select { case <-done: return; default: continue }
 			}
 			if n < 12 { continue }
-			q := append([]byte(nil), buf[:n]...)
-			binary.BigEndian.PutUint16(q[2:4], 0x8180)
-			binary.BigEndian.PutUint16(q[6:8], 1)
-			ans := []byte{0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04, 0x5d, 0xb8, 0xd8, 0x22}
-			_, _ = pc.WriteTo(append(q, ans...), addr)
+			_, _ = pc.WriteTo(dnsTestReply(buf[:n]), addr)
+		}
+	}()
+	var once sync.Once
+	return pc.LocalAddr().String(), func(){ once.Do(func(){ close(done); _ = pc.Close() }) }
+}
+
+func startFlakyTestDNS(t *testing.T) (string, func()) {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil { t.Fatal(err) }
+	done := make(chan struct{})
+	go func() {
+		buf := make([]byte, 2048)
+		seen := 0
+		for {
+			_ = pc.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			n, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				select { case <-done: return; default: continue }
+			}
+			if n < 12 { continue }
+			seen++
+			if seen == 1 { continue } // simulate one transient lost DNS reply
+			_, _ = pc.WriteTo(dnsTestReply(buf[:n]), addr)
 		}
 	}()
 	var once sync.Once
@@ -97,11 +125,17 @@ func startTestDNS(t *testing.T) (string, func()) {
 
 func TestCheckDNSListener(t *testing.T) {
 	addr, stop := startTestDNS(t); defer stop()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second); defer cancel()
 	if !CheckDNSListener(ctx, addr) { t.Fatal("working DNS listener reported unhealthy") }
 	stop()
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond); defer cancel2()
 	if CheckDNSListener(ctx2, addr) { t.Fatal("stopped DNS listener reported healthy") }
+}
+
+func TestCheckDNSListenerRetriesTransientLoss(t *testing.T) {
+	addr, stop := startFlakyTestDNS(t); defer stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second); defer cancel()
+	if !CheckDNSListener(ctx, addr) { t.Fatal("one lost DNS reply should not mark listener unhealthy") }
 }
 
 func TestReliableProbeRegistry(t *testing.T) {
