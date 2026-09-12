@@ -67,6 +67,7 @@ esac
 backup_smartdns(){
   local d="$CONFIG_DIR/backups/smartdns-original" p fragment
   install -d -m 0700 "$d"
+  [[ -f "$d/preexisting" || -f "$d/installed-by-smartunlock" ]] && return 0
   if command -v smartdns >/dev/null 2>&1; then
     touch "$d/preexisting"
     p="$(command -v smartdns)"
