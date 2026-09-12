@@ -76,7 +76,14 @@ func waitMainDNSReady(timeout time.Duration) bool {
 }
 
 func (m *Manager) restartDNS() error {
-	if m.OwnDNS { return m.DNS.Restart() }
+	if m.OwnDNS {
+		err := m.DNS.Restart()
+		// Platform probes use the process-wide HTTP transport. Once DNS routing
+		// changes, discard idle keep-alive connections so the next verification
+		// must resolve and connect through the newly selected unlock DNS.
+		closeProbeIdleConnections()
+		return err
+	}
 	ackPath := reloadAckPath(m.Cfg)
 	oldAck := readReloadAck(ackPath)
 	if err := exec.Command("systemctl", "kill", "--kill-whom=main", "-s", "HUP", m.Cfg.ServiceName).Run(); err != nil { return err }
@@ -86,6 +93,7 @@ func (m *Manager) restartDNS() error {
 	// the newly rendered configuration.
 	if !waitReloadAck(ackPath, oldAck, 10*time.Second) { return fmt.Errorf("daemon reload acknowledgement timed out") }
 	if !waitMainDNSReady(8*time.Second) { return fmt.Errorf("smartdns main listener not ready after daemon reload") }
+	closeProbeIdleConnections()
 	return nil
 }
 
@@ -175,6 +183,27 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 			time.Sleep(1500*time.Millisecond)
 			for id, r := range probeSelected(ctx, nativeSuspects) { checks[id] = r }
 		}
+	}
+
+	// Do not switch a platform from primary to backup (or vice versa) on one
+	// semantic probe failure. Recheck the current route once first; only a
+	// confirmed second failure is eligible for alternate-DNS repair. This keeps
+	// transient HTTP/CDN/WAF errors from causing route churn.
+	var routeSuspects []string
+	m.Mu.Lock()
+	for _, p := range Platforms {
+		if p.Probe == "" || checks[p.ID].Status != "fail" { continue }
+		route := m.State.Routes[p.ID]
+		if route == "primary" && m.Cfg.Backup != "" { routeSuspects = append(routeSuspects, p.ID) }
+		if route == "backup" && m.Cfg.Primary != "" { routeSuspects = append(routeSuspects, p.ID) }
+	}
+	m.Mu.Unlock()
+	if len(routeSuspects) > 0 {
+		confirmed := probeSelected(ctx, routeSuspects)
+		for _, id := range routeSuspects {
+			if r, ok := confirmed[id]; ok { checks[id] = r }
+		}
+		m.Mu.Lock(); m.State.LastChecks = checks; _ = SaveState(m.Cfg.StatePath, m.State); m.Mu.Unlock()
 	}
 
 	original := map[string]string{}; var candidates []string
