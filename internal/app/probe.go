@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,18 +47,42 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	switch p.Probe {
 	case "netflix":
 		return probeNetflix(ctx)
+	case "disney":
+		return probeDisney(ctx)
 	case "youtube":
 		return probeYouTube(ctx)
+	case "primevideo":
+		return probePrimeVideo(ctx)
+	case "max":
+		return probeMax(ctx)
+	case "hulu":
+		return probeHulu(ctx)
 	case "spotify":
 		return probeSpotify(ctx)
+	case "tiktok":
+		return probeTikTok(ctx)
+	case "dazn":
+		return probeDAZN(ctx)
 	case "bbc":
 		return probeBBC(ctx)
+	case "paramount":
+		return probeParamount(ctx)
+	case "peacock":
+		return probePeacock(ctx)
+	case "crunchyroll":
+		return probeCrunchyroll(ctx)
 	case "abema":
 		return probeAbema(ctx)
 	case "bahamut":
 		return probeBahamut(ctx)
 	case "bilibili":
 		return probeBilibili(ctx)
+	case "iqiyi":
+		return probeIQIYI(ctx)
+	case "viu":
+		return probeViu(ctx)
+	case "tvb":
+		return probeTVB(ctx)
 	case "openai":
 		return probeOpenAI(ctx)
 	case "claude":
@@ -252,11 +277,37 @@ func probeCopilot(ctx context.Context) ProbeResult {
 }
 
 func ProbeAll(ctx context.Context) map[string]ProbeResult {
-	out := map[string]ProbeResult{}
+	out := make(map[string]ProbeResult, len(Platforms))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
 	for _, p := range Platforms {
-		c, cancel := context.WithTimeout(ctx, 15*time.Second)
-		out[p.ID] = ProbePlatform(c, p)
-		cancel()
+		if p.Probe == "" {
+			mu.Lock()
+			out[p.ID] = res("unknown", "", "no reliable native probe")
+			mu.Unlock()
+			continue
+		}
+		wg.Add(1)
+		go func(p Platform) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				mu.Lock()
+				out[p.ID] = res("unknown", "", ctx.Err().Error())
+				mu.Unlock()
+				return
+			}
+			defer func() { <-sem }()
+			c, cancel := context.WithTimeout(ctx, 15*time.Second)
+			r := ProbePlatform(c, p)
+			cancel()
+			mu.Lock()
+			out[p.ID] = r
+			mu.Unlock()
+		}(p)
 	}
+	wg.Wait()
 	return out
 }
