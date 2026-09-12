@@ -97,6 +97,7 @@ func mustContain(t *testing.T, path, want string) {
 func TestDaemonSoak(t *testing.T) {
 	if os.Getenv("SMARTUNLOCK_SOAK") != "1" { t.Skip("set SMARTUNLOCK_SOAK=1") }
 	start := time.Now()
+	targetDuration := 10 * time.Minute
 	for _, p := range []string{"/etc/smartdns-unlock", "/var/lib/smartdns-unlock", "/run/smartdns-unlock", "/var/cache/smartdns", "/var/log/smartdns", "/etc/smartdns"} { _ = os.RemoveAll(p) }
 	defer func(){ for _, p := range []string{"/etc/smartdns-unlock", "/var/lib/smartdns-unlock", "/run/smartdns-unlock", "/var/cache/smartdns", "/var/log/smartdns", "/etc/smartdns"} { _ = os.RemoveAll(p) } }()
 
@@ -150,14 +151,14 @@ func TestDaemonSoak(t *testing.T) {
 	backup.Start(t); waitHealth(t, cfg.StatePath, true, true, 8*time.Second)
 	t.Logf("[+%s] backup DNS recovered", time.Since(start).Round(time.Second))
 
-	// Long stable window catches restart loops and monotonically growing resources.
-	time.Sleep(80*time.Second)
+	// Hold a long stable window so the entire fault-injection soak lasts ten minutes.
+	if wait := time.Until(start.Add(targetDuration - 30*time.Second)); wait > 0 { time.Sleep(wait) }
 	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil { t.Fatal(err) }
 	time.Sleep(5*time.Second)
 	t.Logf("[+%s] SIGHUP reload exercised", time.Since(start).Round(time.Second))
 
-	// Continue long enough to detect delayed post-reload failures.
-	time.Sleep(25*time.Second)
+	// Continue until the ten-minute mark to catch delayed post-reload failures.
+	if wait := time.Until(start.Add(targetDuration)); wait > 0 { time.Sleep(wait) }
 	close(monitorDone)
 	cancel()
 	select { case err := <-errCh: if err != nil { t.Fatalf("daemon exit: %v", err) }; case <-time.After(5*time.Second): t.Fatal("daemon did not stop cleanly") }
