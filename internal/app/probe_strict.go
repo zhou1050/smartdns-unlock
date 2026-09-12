@@ -22,8 +22,8 @@ func probeSpotifyStrict(ctx context.Context) ProbeResult {
 		return res("unknown", "", fmt.Sprintf("HTTP %d", code))
 	}
 	low := strings.ToLower(body)
-	if code == 403 || code == 451 || strings.Contains(low, "spotify is currently not available in your country") {
-		return res("fail", "", "Spotify country blocked")
+	if strings.Contains(low, "spotify is currently not available in your country") || explicitGeoBlock(low) {
+		return res("fail", "", "Spotify explicit country block")
 	}
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)"geoCountry"\s*:\s*"([a-z]{2})"`),
@@ -33,6 +33,9 @@ func probeSpotifyStrict(ctx context.Context) ProbeResult {
 		if m := re.FindStringSubmatch(body); len(m) > 1 {
 			return res("pass", strings.ToUpper(m[1]), "Spotify geoCountry returned")
 		}
+	}
+	if code == 403 || code == 429 {
+		return res("unknown", "", fmt.Sprintf("Spotify HTTP %d challenge without geo decision", code))
 	}
 	return res("unknown", "", "Spotify geoCountry unavailable")
 }
@@ -44,20 +47,20 @@ func probeAbemaStrict(ctx context.Context) ProbeResult {
 	if err != nil {
 		return res("unknown", "", err.Error())
 	}
-	if code >= 500 {
-		return res("unknown", "", fmt.Sprintf("HTTP %d", code))
-	}
 	region := strings.ToUpper(findJSONString(body, "isoCountryCode"))
-	if region == "" {
-		if code == 403 || code == 451 {
-			return res("fail", "", fmt.Sprintf("HTTP %d", code))
-		}
-		return res("fail", "", "ABEMA country code unavailable")
-	}
 	if region == "JP" {
 		return res("pass", region, "ABEMA Japan available")
 	}
-	return res("unknown", region, "ABEMA overseas-only response")
+	if region != "" {
+		return res("fail", region, "ABEMA reports non-JP location")
+	}
+	if explicitGeoBlock(body) || code == 451 {
+		return res("fail", "", "ABEMA explicit region denial")
+	}
+	if code == 403 || code == 429 || code >= 500 {
+		return res("unknown", "", fmt.Sprintf("ABEMA HTTP %d without country code", code))
+	}
+	return res("unknown", "", "ABEMA country code unavailable")
 }
 
 func probeBahamutStrict(ctx context.Context) ProbeResult {
@@ -91,27 +94,27 @@ func probeBahamutStrict(ctx context.Context) ProbeResult {
 	if device == "" {
 		return res("unknown", "", "Bahamut device id unavailable")
 	}
-	check := func(sn string) (bool, error) {
+	check := func(sn string) (bool, bool, error) {
 		u := "https://ani.gamer.com.tw/ajax/token.php?adID=89422&sn=" + url.QueryEscape(sn) + "&device=" + url.QueryEscape(device)
 		status, b, err := get(u)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if status/100 != 2 {
-			return false, fmt.Errorf("token HTTP %d", status)
+			return false, explicitGeoBlock(b), fmt.Errorf("token HTTP %d", status)
 		}
 		var v map[string]any
 		if json.Unmarshal([]byte(b), &v) != nil {
-			return false, nil
+			return false, explicitGeoBlock(b), nil
 		}
 		_, ok := v["animeSn"]
-		return ok, nil
+		return ok, explicitGeoBlock(b), nil
 	}
-	tw, err := check("38832")
+	tw, twBlocked, err := check("38832")
 	if err != nil {
 		return res("unknown", "", err.Error())
 	}
-	hkmo, err := check("37783")
+	hkmo, hkmoBlocked, err := check("37783")
 	if err != nil {
 		return res("unknown", "", err.Error())
 	}
@@ -121,7 +124,10 @@ func probeBahamutStrict(ctx context.Context) ProbeResult {
 	if hkmo {
 		return res("pass", "HK/MO", "Bahamut playback token available")
 	}
-	return res("fail", "", "Bahamut playback token unavailable")
+	if twBlocked && hkmoBlocked {
+		return res("fail", "", "Bahamut playback endpoints explicitly region blocked")
+	}
+	return res("unknown", "", "Bahamut playback token unavailable without explicit geo block")
 }
 
 func probeOpenAIStrict(ctx context.Context) ProbeResult {
