@@ -1,5 +1,6 @@
 fast.com
 netflix.com
+netflix.com.edgesuite.net
 netflix.net
 nflxext.com
 nflximg.com

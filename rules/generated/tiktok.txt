@@ -1,4 +1,9 @@
 byteoversea.com
+p16-tiktokcdn-com.akamaized.net
+roovza-launches.appsflyersdk.com
+roovza.inapps.appsflyersdk.com
+roovza.launches.appsflyersdk.com
+roovza.skadsdk.appsflyersdk.com
 tiktok.com
 tiktokcdn.com
 tiktokv.com

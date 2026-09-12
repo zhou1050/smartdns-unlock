@@ -2,3 +2,4 @@ biliapi.com
 biliapi.net
 bilibili.com
 bilivideo.com
+upos-hz-mirrorakam.akamaized.net

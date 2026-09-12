@@ -1,3 +1,8 @@
 abema.io
 abema.tv
+abematv.akamaized.net
 ameba.jp
+ds-linear-abematv.akamaized.net
+ds-vod-abematv.akamaized.net
+linear-abematv.akamaized.net
+vod-abematv.akamaized.net

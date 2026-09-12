@@ -1,3 +1,4 @@
 hulu.com
+hulu.playback.edge.bamgrid.com
 huluim.com
 hulustream.com

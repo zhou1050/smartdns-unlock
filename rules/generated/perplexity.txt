@@ -1,2 +1,4 @@
 perplexity.ai
+ppl-ai-file-upload.s3.amazonaws.com
+pplx-res.cloudinary.com
 pplx.ai

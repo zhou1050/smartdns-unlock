@@ -1,4 +1,10 @@
 bamgrid.com
 disney-plus.net
+disney.my.sentry.io
 disneyplus.com
+disneyplus.com.ssl.sc.omtrdc.net
 dssott.com
+espn.api.edge.bamgrid.com
+espn.hb.omtrdc.net
+espndotcom.tt.omtrdc.net
+hulu.playback.edge.bamgrid.com
