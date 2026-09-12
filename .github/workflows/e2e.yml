@@ -23,12 +23,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
 
       - name: Build exact commit binary for E2E
         run: |
           mkdir -p dist
-          docker run --rm -v "$PWD:/src" -w /src golang:1.22-bookworm \
-            sh -lc "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-e2e ./cmd/smartunlock"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-e2e ./cmd/smartunlock
           test -x dist/smartunlock-e2e
 
       - name: Build Debian systemd test image
@@ -132,19 +135,21 @@ jobs:
       - name: Capture logs and uninstall
         if: always()
         run: |
-          docker exec smartunlock-e2e bash -lc 'journalctl -u smartunlock.service --no-pager > /tmp/smartunlock-journal.txt || true; cp /var/log/smartdns/smartdns.log /tmp/smartdns.log 2>/dev/null || true'
-          docker cp smartunlock-e2e:/tmp/smartunlock-journal.txt ./smartunlock-journal.txt || true
-          docker cp smartunlock-e2e:/tmp/smartdns.log ./smartdns.log || true
-          if docker exec smartunlock-e2e test -x /usr/local/bin/smartunlock; then
-            docker exec smartunlock-e2e smartunlock uninstall -y
-            docker exec smartunlock-e2e bash -lc '
-              set -euxo pipefail
-              test ! -e /usr/local/bin/smartunlock
-              test ! -e /etc/systemd/system/smartunlock.service
-              test ! -d /etc/smartdns-unlock
-              ! command -v smartdns
-              cmp -s /etc/resolv.conf /tmp/resolv.expected
-            '
+          if docker inspect smartunlock-e2e >/dev/null 2>&1; then
+            docker exec smartunlock-e2e bash -lc 'journalctl -u smartunlock.service --no-pager > /tmp/smartunlock-journal.txt || true; cp /var/log/smartdns/smartdns.log /tmp/smartdns.log 2>/dev/null || true' || true
+            docker cp smartunlock-e2e:/tmp/smartunlock-journal.txt ./smartunlock-journal.txt 2>/dev/null || true
+            docker cp smartunlock-e2e:/tmp/smartdns.log ./smartdns.log 2>/dev/null || true
+            if docker exec smartunlock-e2e test -x /usr/local/bin/smartunlock; then
+              docker exec smartunlock-e2e smartunlock uninstall -y
+              docker exec smartunlock-e2e bash -lc '
+                set -euxo pipefail
+                test ! -e /usr/local/bin/smartunlock
+                test ! -e /etc/systemd/system/smartunlock.service
+                test ! -d /etc/smartdns-unlock
+                ! command -v smartdns
+                cmp -s /etc/resolv.conf /tmp/resolv.expected
+              '
+            fi
           fi
 
       - name: Show collected logs
