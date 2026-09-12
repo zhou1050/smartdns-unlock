@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func probeRequest(ctx context.Context, method, rawURL string, headers map[string]string, body string) (int, string, http.Header, string, error) {
@@ -17,7 +18,7 @@ func probeRequest(ctx context.Context, method, rawURL string, headers map[string
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	cl := probeHTTPClient(ctx)
+	cl := &http.Client{Timeout: 12 * time.Second}
 	resp, err := cl.Do(req)
 	if err != nil {
 		return 0, "", nil, "", err
