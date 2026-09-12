@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,26 @@ func directive(proto string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported proto %q", proto)
 	}
+}
+
+func ipv6LoopbackAvailable() bool {
+	ifaces, err := net.Interfaces()
+	if err != nil { return false }
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil { continue }
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && ip.To4() == nil && ip.Equal(net.IPv6loopback) { return true }
+		}
+	}
+	return false
 }
 
 func Render(cfg Config, s State, rules RulesFile) error {
@@ -95,14 +116,19 @@ func Render(cfg Config, s State, rules RulesFile) error {
 	if err := os.WriteFile(filepath.Join(cfg.RuntimeDir, "platforms.conf"), []byte(pf.String()), 0644); err != nil { return err }
 	if err := os.MkdirAll(filepath.Dir(cfg.SmartDNSConf), 0755); err != nil { return err }
 
+	var mainBinds strings.Builder
+	mainBinds.WriteString("bind 127.0.0.1:53\n")
+	// Some VPS kernels disable IPv6 completely, which removes ::1 from lo.
+	// SmartDNS treats an unavailable [::1]:53 bind as fatal, so only emit the
+	// IPv6 listener when the kernel actually exposes the IPv6 loopback address.
+	if ipv6LoopbackAvailable() { mainBinds.WriteString("bind [::1]:53\n") }
+
 	var healthBinds strings.Builder
 	if cfg.Primary != "" { fmt.Fprintf(&healthBinds, "bind %s -group unlock_primary -no-cache -no-speed-check\n", cfg.HealthPrimaryAddr) }
 	if cfg.Backup != "" { fmt.Fprintf(&healthBinds, "bind %s -group unlock_backup -no-cache -no-speed-check\n", cfg.HealthBackupAddr) }
 	conf := fmt.Sprintf(`# Managed by smartunlock
 server-name smartunlock
-bind 127.0.0.1:53
-bind [::1]:53
-%s
+%s%s
 cache-size 32768
 cache-persist yes
 cache-file /var/cache/smartdns/smartdns.cache
@@ -118,7 +144,7 @@ server-https https://cloudflare-dns.com/dns-query -host-ip 1.1.1.1
 server-https https://dns.google/dns-query -host-ip 8.8.8.8
 conf-file %s
 conf-file %s
-`, healthBinds.String(), filepath.Join(cfg.RuntimeDir, "upstreams.conf"), filepath.Join(cfg.RuntimeDir, "platforms.conf"))
+`, mainBinds.String(), healthBinds.String(), filepath.Join(cfg.RuntimeDir, "upstreams.conf"), filepath.Join(cfg.RuntimeDir, "platforms.conf"))
 	return os.WriteFile(cfg.SmartDNSConf, []byte(conf), 0644)
 }
 
