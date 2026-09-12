@@ -94,21 +94,61 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	}
 }
 
+func netflixExplicitBlock(text string) bool {
+	low := strings.ToLower(text)
+	for _, marker := range []string{
+		"not available in your country",
+		"not available in your region",
+		"unavailable in your country",
+		"unavailable in your region",
+		"this title is not available",
+		"this title isn’t available",
+		"this title isn't available",
+	} {
+		if strings.Contains(low, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func netflixProbeDecision(code int, final, body string) string {
+	text := final + " " + body
+	if netflixExplicitBlock(text) {
+		return "fail"
+	}
+	if code == 403 || code == 429 || code == 451 || code >= 500 {
+		return "unknown"
+	}
+	low := strings.ToLower(text)
+	if code >= 200 && code < 400 && strings.Contains(strings.ToLower(final), "netflix.com") && (strings.Contains(final, "/title/") || strings.Contains(low, "netflix")) {
+		return "pass"
+	}
+	return "unknown"
+}
+
 func probeNetflix(ctx context.Context) ProbeResult {
+	blocked := 0
+	unknown := 0
 	for _, u := range []string{"https://www.netflix.com/title/81280792", "https://www.netflix.com/title/70143836"} {
 		code, final, body, err := httpGet(ctx, u, map[string]string{"Accept-Language": "en"})
 		if err != nil {
-			return res("unknown", "", err.Error())
+			unknown++
+			continue
 		}
-		low := strings.ToLower(body + " " + final)
-		if code == 403 || code == 451 || strings.Contains(low, "not available in your country") || strings.Contains(low, "unavailable in your region") {
-			return res("fail", "", "region blocked")
-		}
-		if code/100 == 2 && (strings.Contains(final, "/title/") || strings.Contains(low, "netflix")) {
-			return res("pass", "", "full title reachable")
+		switch netflixProbeDecision(code, final, body) {
+		case "pass":
+			return res("pass", "", "Netflix title reachable")
+		case "fail":
+			blocked++
+		default:
+			unknown++
 		}
 	}
-	return res("fail", "", "Netflix title unavailable")
+	if blocked >= 2 {
+		return res("fail", "", "Netflix multiple titles explicitly region blocked")
+	}
+	return res("unknown", "", fmt.Sprintf("Netflix inconclusive blocked=%d unknown=%d", blocked, unknown))
 }
 
 func probeYouTube(ctx context.Context) ProbeResult {
