@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -36,9 +37,56 @@ func (m *Manager) SyncRules(ctx context.Context) error {
 	return Render(m.Cfg, m.State, m.Rules)
 }
 
+func reloadAckPath(cfg Config) string { return filepath.Join(cfg.RuntimeDir, "reload.ack") }
+
+func readReloadAck(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil { return "" }
+	return strings.TrimSpace(string(b))
+}
+
+func writeReloadAck(cfg Config) error {
+	return os.WriteFile(reloadAckPath(cfg), []byte(fmt.Sprintf("%d\n", time.Now().UnixNano())), 0644)
+}
+
+func waitReloadAck(path, old string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cur := readReloadAck(path); cur != "" && cur != old { return true }
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+func waitMainDNSReady(timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil { return false }
+		id := uint16(time.Now().UnixNano())
+		if checkDNSListenerOnce(ctx, "127.0.0.1:53", 1200*time.Millisecond, id) { return true }
+		t := time.NewTimer(150 * time.Millisecond)
+		select {
+		case <-ctx.Done(): t.Stop(); return false
+		case <-t.C:
+		}
+	}
+	return false
+}
+
 func (m *Manager) restartDNS() error {
 	if m.OwnDNS { return m.DNS.Restart() }
-	return exec.Command("systemctl", "kill", "--kill-whom=main", "-s", "HUP", m.Cfg.ServiceName).Run()
+	ackPath := reloadAckPath(m.Cfg)
+	oldAck := readReloadAck(ackPath)
+	if err := exec.Command("systemctl", "kill", "--kill-whom=main", "-s", "HUP", m.Cfg.ServiceName).Run(); err != nil { return err }
+	// External CLI commands must not return merely because SIGHUP was queued.
+	// Wait until the daemon has consumed the debounced reload and restarted its
+	// SmartDNS child, then verify the main listener can actually resolve through
+	// the newly rendered configuration.
+	if !waitReloadAck(ackPath, oldAck, 10*time.Second) { return fmt.Errorf("daemon reload acknowledgement timed out") }
+	if !waitMainDNSReady(8*time.Second) { return fmt.Errorf("smartdns main listener not ready after daemon reload") }
+	return nil
 }
 
 func (m *Manager) Apply(restart bool) error {
@@ -77,7 +125,7 @@ func (m *Manager) HealthCheck(ctx context.Context) (bool, bool, error) {
 	m.Mu.Unlock()
 	if e != nil { return p, b, e }
 	if changed {
-		_ = m.Apply(true)
+		if e := m.Apply(true); e != nil { return p, b, e }
 		_ = NotifyTelegram(ctx, m.Cfg, fmt.Sprintf("SmartDNS 上游健康变化：主=%v 备用=%v", p, b))
 	}
 	return p, b, nil
