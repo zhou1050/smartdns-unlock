@@ -1,0 +1,105 @@
+name: SmartUnlock Ubuntu E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'internal/**'
+      - 'cmd/**'
+      - '.github/workflows/e2e-ubuntu.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smartunlock-ubuntu-e2e
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+
+      - name: Build exact commit binary
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/smartunlock-e2e ./cmd/smartunlock
+
+      - name: Build Ubuntu 24.04 systemd image
+        run: |
+          cat > /tmp/Dockerfile.smartunlock-ubuntu <<'DOCKER'
+          FROM ubuntu:24.04
+          ENV container=docker DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv systemd-resolved ca-certificates curl && rm -rf /var/lib/apt/lists/*
+          STOPSIGNAL SIGRTMIN+3
+          CMD ["/sbin/init"]
+          DOCKER
+          docker build -f /tmp/Dockerfile.smartunlock-ubuntu -t smartunlock-ubuntu /tmp
+
+      - name: Start Ubuntu with systemd-resolved
+        run: |
+          docker run -d --name smartunlock-ubuntu --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD:/src:ro" smartunlock-ubuntu
+          for i in $(seq 1 30); do
+            docker exec smartunlock-ubuntu systemctl is-system-running --wait >/dev/null 2>&1 && break || true
+            sleep 1
+          done
+          docker exec smartunlock-ubuntu bash -lc '
+            set -euxo pipefail
+            cp -L /etc/resolv.conf /tmp/resolv.before
+            umount /etc/resolv.conf 2>/dev/null || true
+            rm -f /etc/resolv.conf
+            systemctl enable --now systemd-resolved.service
+            ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+            test "$(readlink /etc/resolv.conf)" = /run/systemd/resolve/stub-resolv.conf
+            systemctl is-enabled --quiet systemd-resolved.service
+            systemctl is-active --quiet systemd-resolved.service
+          '
+
+      - name: Install and verify DNS takeover
+        run: |
+          docker exec \
+            -e SMARTUNLOCK_BINARY='/src/dist/smartunlock-e2e' \
+            -e UNLOCK_PRIMARY='https://cloudflare-dns.com/dns-query' \
+            -e UNLOCK_BACKUP='8.8.8.8' \
+            -e AUTO_NATIVE_DETECT=0 \
+            -e CHECK_INTERVAL=1m \
+            smartunlock-ubuntu bash /src/install.sh
+          docker exec smartunlock-ubuntu bash -lc '
+            set -euxo pipefail
+            grep -qx "ID=ubuntu" /etc/os-release
+            systemctl is-active --quiet smartunlock.service
+            ! systemctl is-active --quiet systemd-resolved.service
+            ! systemctl is-enabled --quiet systemd-resolved.service
+            test ! -L /etc/resolv.conf
+            test "$(awk "/^nameserver/{print \$2; exit}" /etc/resolv.conf)" = 127.0.0.1
+            dig @127.0.0.1 example.com A +time=5 +tries=1 +short | grep -q .
+            smartunlock health-check | tee /tmp/health.txt
+            grep -q "主=true" /tmp/health.txt
+            grep -q "备用=true" /tmp/health.txt
+          '
+
+      - name: Uninstall and verify Ubuntu DNS restore
+        run: |
+          docker exec smartunlock-ubuntu smartunlock uninstall -y
+          docker exec smartunlock-ubuntu bash -lc '
+            set -euxo pipefail
+            test ! -e /usr/local/bin/smartunlock
+            test "$(readlink /etc/resolv.conf)" = /run/systemd/resolve/stub-resolv.conf
+            systemctl is-enabled --quiet systemd-resolved.service
+            systemctl is-active --quiet systemd-resolved.service
+          '
+
+      - name: Show logs
+        if: always()
+        run: |
+          docker exec smartunlock-ubuntu journalctl -u smartunlock.service -n 160 --no-pager 2>/dev/null || true
+          docker rm -f smartunlock-ubuntu >/dev/null 2>&1 || true

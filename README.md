@@ -1,6 +1,6 @@
 # SmartDNS Unlock
 
-Debian 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务器端采用 **单 Go 二进制 + 单 systemd 服务**：规则同步、DNS 健康检查、平台复检、主备切换和 Telegram 通知都由 `smartunlock` 自己完成。
+Debian / Ubuntu 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务器端采用 **单 Go 二进制 + 单 systemd 服务**：规则同步、DNS 健康检查、平台复检、主备切换和 Telegram 通知都由 `smartunlock` 自己完成。
 
 ## 功能
 
@@ -165,13 +165,14 @@ systemctl kill --kill-whom=main -s HUP smartunlock.service
 
 ## 测试
 
-仓库持续执行三类验证：
+仓库持续执行四类验证：
 
 - Go 单元测试及静态 `amd64` / `arm64` 编译。
 - `go test -race` + 3 分钟 daemon 故障注入 soak test，观察主备切换、goroutine、RSS 和子进程退出。
 - 干净 Debian 12 + systemd 端到端测试：安装真实 SmartDNS、原生扫描、系统 DNS 接管、CLI 连续变更、完整健康周期、主/备故障注入、恢复和卸载回滚。
+- 干净 Ubuntu 24.04 + systemd-resolved 端到端测试：验证安装、DNS 接管，以及卸载后恢复 `systemd-resolved` 和原 `/etc/resolv.conf` 符号链接。
 
-Debian E2E 会先从当前 commit 编译二进制，再通过 `SMARTUNLOCK_BINARY` 安装该精确版本，不依赖 rolling `edge` 的发布时间顺序。
+Debian / Ubuntu E2E 会先从当前 commit 编译二进制，再通过 `SMARTUNLOCK_BINARY` 安装该精确版本，不依赖 rolling `edge` 的发布时间顺序。
 
 ## 说明
 

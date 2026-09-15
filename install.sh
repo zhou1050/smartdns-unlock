@@ -34,7 +34,10 @@ unlock_resolv(){ chattr -i /etc/resolv.conf >/dev/null 2>&1 || true; }
 [[ -r /etc/os-release ]] || die '无法识别系统'
 # shellcheck disable=SC1091
 source /etc/os-release
-[[ "${ID:-}" == debian ]] || die '当前仅支持 Debian'
+case "${ID:-}" in
+  debian|ubuntu) ;;
+  *) die "当前仅支持 Debian / Ubuntu（检测到：${PRETTY_NAME:-${ID:-未知系统}}）" ;;
+esac
 
 cleanup(){
   local rc=$?
