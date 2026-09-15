@@ -9,6 +9,7 @@ STATE_DIR=/var/lib/smartdns-unlock
 BIN=/usr/local/bin/smartunlock
 SERVICE=/etc/systemd/system/smartunlock.service
 SMARTDNS_MANAGED_MARKER="$CONFIG_DIR/smartdns-managed.version"
+INSTALL_COMPLETE_MARKER="$CONFIG_DIR/install.complete"
 PRIMARY="${UNLOCK_PRIMARY:-}"
 BACKUP="${UNLOCK_BACKUP:-}"
 PRIMARY_PROTO="${UNLOCK_PRIMARY_PROTO:-}"
@@ -49,6 +50,7 @@ cleanup(){
   fi
   if [[ $DNS_PREPARED == 1 && $DNS_OK != 1 ]]; then
     warn '安装未完成，恢复本次安装前 DNS'
+    rm -f "$INSTALL_COMPLETE_MARKER"
     systemctl disable --now smartunlock.service >/dev/null 2>&1 || true
     unlock_resolv
     if [[ -f "$WORK/resolv.link" ]]; then
@@ -284,7 +286,16 @@ UNIT
   systemctl enable smartunlock.service >/dev/null
 }
 
-if [[ -x "$BIN" && -f "$CONFIG_DIR/config.env" && -f "$SERVICE" && "${SMARTUNLOCK_FULL_REINSTALL:-0}" != 1 ]]; then
+installation_complete(){
+  [[ -f "$INSTALL_COMPLETE_MARKER" ]] && return 0
+  # Adopt installations created before the completion marker was introduced,
+  # but never mistake files left by a failed first install for a working one.
+  [[ -f /etc/resolv.conf ]] && grep -qx '# Managed by smartunlock' /etc/resolv.conf || return 1
+  dig @127.0.0.1 cloudflare.com A +time=2 +tries=1 +short 2>/dev/null | grep -q . || return 1
+  touch "$INSTALL_COMPLETE_MARKER"
+}
+
+if [[ -x "$BIN" && -f "$CONFIG_DIR/config.env" && -f "$SERVICE" ]] && installation_complete && [[ "${SMARTUNLOCK_FULL_REINSTALL:-0}" != 1 ]]; then
   upgrade_existing
   exit 0
 fi
@@ -299,9 +310,6 @@ info '安装阶段检测服务器原生解锁能力'
 
 backup_dns
 DNS_PREPARED=1
-if systemctl is-active --quiet systemd-resolved.service 2>/dev/null || systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null; then
-  systemctl disable --now systemd-resolved.service >/dev/null 2>&1 || die '无法停止 systemd-resolved'
-fi
 install_service
 systemctl restart smartunlock.service
 
@@ -313,6 +321,12 @@ for _ in $(seq 1 45); do
 done
 [[ $ok == 1 ]] || { journalctl -u smartunlock.service -n 80 --no-pager >&2 || true; die 'SmartDNS 本机查询验证失败'; }
 
+# Ubuntu normally points /etc/resolv.conf at systemd-resolved's 127.0.0.53
+# stub. Keep it alive while smartunlock performs its first rule download, then
+# switch the host to the already-verified local SmartDNS listener atomically.
+if systemctl is-active --quiet systemd-resolved.service 2>/dev/null || systemctl is-enabled --quiet systemd-resolved.service 2>/dev/null; then
+  systemctl disable --now systemd-resolved.service >/dev/null 2>&1 || die '无法停止 systemd-resolved'
+fi
 unlock_resolv
 rm -f /etc/resolv.conf
 {
@@ -331,6 +345,7 @@ else
 fi
 getent ahostsv4 github.com >/dev/null 2>&1 || die '系统 DNS 接管验证失败'
 DNS_OK=1
+touch "$INSTALL_COMPLETE_MARKER"
 
 info '执行首次综合解锁复检'
 "$BIN" check || warn '首次综合复检未完整完成，可稍后手动执行 smartunlock check'

@@ -101,5 +101,13 @@ jobs:
       - name: Show logs
         if: always()
         run: |
+          docker exec smartunlock-ubuntu bash -lc '
+            grep "^hosts:" /etc/nsswitch.conf || true
+            ls -l /etc/resolv.conf || true
+            cat /etc/resolv.conf || true
+            systemctl status systemd-resolved.service --no-pager -l || true
+            dig @127.0.0.1 github.com A +time=2 +tries=1 +short || true
+            getent ahostsv4 github.com || true
+          ' 2>/dev/null || true
           docker exec smartunlock-ubuntu journalctl -u smartunlock.service -n 160 --no-pager 2>/dev/null || true
           docker rm -f smartunlock-ubuntu >/dev/null 2>&1 || true
