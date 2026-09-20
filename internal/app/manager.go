@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -110,6 +111,26 @@ func (m *Manager) Apply(restart bool) error {
 	return nil
 }
 
+// ApplyRouteChange renders the current state and restarts SmartDNS only when
+// the effective platform routing file changed. Health state can change without
+// changing any active route (for example, an unused backup going down). In
+// that case restarting the local DNS listener only creates avoidable lookup
+// failures and provides no failover benefit.
+//
+// The boolean result reports whether the effective routing changed.
+func (m *Manager) ApplyRouteChange(restart bool) (bool, error) {
+	path := filepath.Join(m.Cfg.RuntimeDir, "platforms.conf")
+	before, beforeErr := os.ReadFile(path)
+	if err := m.Apply(false); err != nil { return false, err }
+	after, err := os.ReadFile(path)
+	if err != nil { return false, err }
+	changed := beforeErr != nil || !bytes.Equal(before, after)
+	if changed && restart {
+		if err := m.restartDNS(); err != nil { return true, err }
+	}
+	return changed, nil
+}
+
 func (m *Manager) NativeScan(ctx context.Context) error {
 	m.Mu.Lock(); defer m.Mu.Unlock()
 	checks := ProbeAll(ctx)
@@ -135,8 +156,11 @@ func (m *Manager) HealthCheck(ctx context.Context) (bool, bool, error) {
 	m.Mu.Unlock()
 	if e != nil { return p, b, e }
 	if changed {
-		if e := m.Apply(true); e != nil { return p, b, e }
-		_ = NotifyTelegram(ctx, m.Cfg, fmt.Sprintf("SmartDNS 上游健康变化：主=%v 备用=%v", p, b))
+		routeChanged, e := m.ApplyRouteChange(true)
+		if e != nil { return p, b, e }
+		msg := fmt.Sprintf("SmartDNS 上游健康变化：主=%v 备用=%v", p, b)
+		if !routeChanged { msg += "\n有效分流未变化，SmartDNS 未重启" }
+		_ = NotifyTelegram(ctx, m.Cfg, msg)
 	}
 	return p, b, nil
 }
@@ -182,7 +206,7 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 		}
 		_ = SaveState(m.Cfg.StatePath, m.State); m.Mu.Unlock()
 		if changed {
-			if e := m.Apply(true); e != nil { return checks, e }
+			if _, e := m.ApplyRouteChange(true); e != nil { return checks, e }
 			time.Sleep(1500*time.Millisecond)
 			for id, r := range probeSelected(ctx, nativeSuspects) { checks[id] = r }
 		}
@@ -223,7 +247,7 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 	if len(candidates) > 0 { _ = SaveState(m.Cfg.StatePath, m.State) }
 	m.Mu.Unlock()
 	if len(candidates) > 0 {
-		if e := m.Apply(true); e != nil { return checks, e }
+		if _, e := m.ApplyRouteChange(true); e != nil { return checks, e }
 		time.Sleep(1500*time.Millisecond)
 		alts := probeSelected(ctx, candidates); restored := false
 		m.Mu.Lock()
@@ -232,7 +256,7 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 			m.State.Routes[id] = original[id]; restored = true
 		}
 		_ = SaveState(m.Cfg.StatePath, m.State); m.Mu.Unlock()
-		if restored { if e := m.Apply(true); e != nil { return checks, e } }
+		if restored { if _, e := m.ApplyRouteChange(true); e != nil { return checks, e } }
 	}
 	m.Mu.Lock(); m.State.LastChecks = checks; _ = SaveState(m.Cfg.StatePath, m.State); m.Mu.Unlock()
 	return checks, nil

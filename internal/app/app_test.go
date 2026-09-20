@@ -37,6 +37,37 @@ func TestPrimaryHealthFallback(t *testing.T) {
 	if !strings.Contains(string(b), "unlock_backup") { t.Fatalf("health fallback not rendered: %s", string(b)) }
 }
 
+func TestApplyRouteChangeSkipsUnusedBackupHealthRestart(t *testing.T) {
+	d := t.TempDir()
+	cfg := DefaultConfig(); cfg.RuntimeDir = filepath.Join(d, "run"); cfg.SmartDNSConf = filepath.Join(d, "smartdns.conf")
+	cfg.Primary = "https://primary.example/dns-query"; cfg.PrimaryProto = "doh"; cfg.Backup = "192.0.2.53"; cfg.BackupProto = "udp"
+	cfg.SmartDNSBin = filepath.Join(d, "must-not-be-started")
+	s := NewState(); s.Routes["openai"] = "primary"; s.RouteModes["openai"] = "auto"
+	r := RulesFile{Version: 1, Rules: map[string][]string{"openai": {"openai.com"}}}
+	m := &Manager{Cfg: cfg, State: s, Rules: r, DNS: NewSmartDNSProcess(cfg), OwnDNS: true}
+	if err := m.Apply(false); err != nil { t.Fatal(err) }
+	m.State.BackupHealthy = false
+	changed, err := m.ApplyRouteChange(true)
+	if err != nil { t.Fatal(err) }
+	if changed { t.Fatal("unused backup health change altered effective routing") }
+}
+
+func TestApplyRouteChangeDetectsEffectiveFailover(t *testing.T) {
+	d := t.TempDir()
+	cfg := DefaultConfig(); cfg.RuntimeDir = filepath.Join(d, "run"); cfg.SmartDNSConf = filepath.Join(d, "smartdns.conf")
+	cfg.Primary = "https://primary.example/dns-query"; cfg.PrimaryProto = "doh"; cfg.Backup = "192.0.2.53"; cfg.BackupProto = "udp"
+	s := NewState(); s.Routes["openai"] = "primary"; s.RouteModes["openai"] = "auto"
+	r := RulesFile{Version: 1, Rules: map[string][]string{"openai": {"openai.com"}}}
+	m := &Manager{Cfg: cfg, State: s, Rules: r, DNS: NewSmartDNSProcess(cfg), OwnDNS: true}
+	if err := m.Apply(false); err != nil { t.Fatal(err) }
+	m.State.PrimaryHealthy = false
+	changed, err := m.ApplyRouteChange(false)
+	if err != nil { t.Fatal(err) }
+	if !changed { t.Fatal("primary failure did not change effective routing") }
+	b, err := os.ReadFile(filepath.Join(cfg.RuntimeDir, "platforms.conf")); if err != nil { t.Fatal(err) }
+	if !strings.Contains(string(b), "-nameserver unlock_backup") { t.Fatalf("effective failover missing: %s", b) }
+}
+
 func TestBackupHealthFailback(t *testing.T) {
 	d := t.TempDir()
 	cfg := DefaultConfig(); cfg.RuntimeDir = filepath.Join(d, "run"); cfg.SmartDNSConf = filepath.Join(d, "smartdns.conf")
