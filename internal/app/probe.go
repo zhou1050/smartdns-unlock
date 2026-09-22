@@ -84,7 +84,7 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	case "tvb":
 		return probeTVB(ctx)
 	case "openai":
-		return probeOpenAIStrict(ctx)
+		return probeOpenAI(ctx)
 	case "claude":
 		return probeClaude(ctx)
 	case "copilot":
@@ -304,7 +304,7 @@ func openAIProbeDecision(apiCode int, apiBody string, iosCode int, iosBody strin
 	if apiBlocked && iosBlocked {
 		return "fail"
 	}
-	apiPositive := apiCode > 0 && apiCode < 500 && strings.TrimSpace(apiBody) != "" && !apiBlocked
+	apiPositive := apiCode >= 200 && apiCode < 400 && strings.TrimSpace(apiBody) != "" && !apiBlocked
 	iosPositive := (iosCode >= 200 && iosCode < 400 || iosCode == 404) && strings.TrimSpace(iosBody) != "" && !iosBlocked
 	if apiBlocked || iosBlocked {
 		return "unknown"

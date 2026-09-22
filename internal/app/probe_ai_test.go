@@ -24,6 +24,15 @@ func TestOpenAIProbeDecisionSingleBlockIsUnknown(t *testing.T) {
 	}
 }
 
+func TestOpenAIProbeDecisionGeneric403IsUnknown(t *testing.T) {
+	if got := openAIProbeDecision(403, "Cloudflare challenge", 200, `{}`); got != "unknown" {
+		t.Fatalf("expected generic API 403 to remain unknown, got %q", got)
+	}
+	if got := openAIProbeDecision(200, `{}`, 403, "Access denied"); got != "unknown" {
+		t.Fatalf("expected generic iOS 403 to remain unknown, got %q", got)
+	}
+}
+
 func TestClaudeChallengeIsNotGeoBlock(t *testing.T) {
 	if got := claudeProbeDecision(403, "https://claude.ai/", "Just a moment...", "US"); got != "unknown" {
 		t.Fatalf("expected unknown for Claude anti-bot challenge, got %q", got)
