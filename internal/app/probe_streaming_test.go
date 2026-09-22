@@ -20,6 +20,20 @@ func TestNetflixReachableTitlePasses(t *testing.T) {
 	}
 }
 
+func TestNetflixOriginalsOnlyDoesNotPass(t *testing.T) {
+	status, detail := netflixFullAccessDecision("fail", "pass")
+	if status != "fail" || detail == "" {
+		t.Fatalf("expected Originals-only result to fail full unlock, got %q %q", status, detail)
+	}
+}
+
+func TestNetflixLicensedInconclusiveDoesNotPass(t *testing.T) {
+	status, _ := netflixFullAccessDecision("unknown", "pass")
+	if status != "unknown" {
+		t.Fatalf("expected licensed-title uncertainty to remain unknown, got %q", status)
+	}
+}
+
 func TestDisneySupportedLocationPasses(t *testing.T) {
 	graph := `{"extensions":{"sdk":{"session":{"location":{"countryCode":"SG","inSupportedLocation":true}}}}}`
 	status, region := disneyProbeDecision(200, `{"refresh_token":"ok"}`, 200, graph, "https://www.disneyplus.com/")
@@ -54,9 +68,38 @@ func TestPeacockChallengeDoesNotFail(t *testing.T) {
 	}
 }
 
-func TestCrunchyrollNonUSRegionCanPass(t *testing.T) {
-	if got := crunchyrollProbeDecision("SG", 200, "https://www.crunchyroll.com/", "Crunchyroll"); got != "pass" {
-		t.Fatalf("expected usable non-US Crunchyroll region to pass, got %q", got)
+func TestCrunchyrollPublicPageIsInconclusive(t *testing.T) {
+	if got := crunchyrollProbeDecision("SG", 200, "https://www.crunchyroll.com/", "Crunchyroll"); got != "unknown" {
+		t.Fatalf("expected public Crunchyroll page to remain unknown, got %q", got)
+	}
+}
+
+func TestParamountPublicPageIsInconclusive(t *testing.T) {
+	if got := paramountProbeDecision(200, "https://www.paramountplus.com/", "Paramount+"); got != "unknown" {
+		t.Fatalf("expected public Paramount page to remain unknown, got %q", got)
+	}
+}
+
+func TestPeacockPublicPageIsInconclusive(t *testing.T) {
+	if got := peacockProbeDecision(200, "https://www.peacocktv.com/", "Peacock"); got != "unknown" {
+		t.Fatalf("expected public Peacock page to remain unknown, got %q", got)
+	}
+}
+
+func TestOpenAIEndpointsMustAgreeBeforePass(t *testing.T) {
+	if got := openAIProbeDecision(200, `{}`, 403, "blocked_why_headline"); got != "unknown" {
+		t.Fatalf("expected disagreeing OpenAI endpoints to remain unknown, got %q", got)
+	}
+	if got := openAIProbeDecision(200, `{}`, 200, `{}`); got != "pass" {
+		t.Fatalf("expected two positive OpenAI endpoints to pass, got %q", got)
+	}
+}
+
+func TestClaudeChallengeAndLandingPageAreInconclusive(t *testing.T) {
+	for _, code := range []int{200, 403, 429} {
+		if got := claudeProbeDecision(code, "https://claude.ai/", "Claude", "US"); got != "unknown" {
+			t.Fatalf("Claude HTTP %d unexpectedly passed: %q", code, got)
+		}
 	}
 }
 

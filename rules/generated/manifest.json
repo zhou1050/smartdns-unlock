@@ -2,33 +2,33 @@
   "schema": 1,
   "platforms": {
     "netflix": {
-      "count": 9,
-      "sha256": "a7f2d5459c25fa140db3e873b7502c4a67136393c41c131ac61adba4266cba21",
+      "count": 24,
+      "sha256": "cbe60e13c3a651f67796dc79408e588e2f482b8959b5b8850cb0587618e4538a",
       "warnings": []
     },
     "disney": {
-      "count": 10,
-      "sha256": "e256144163de7abf18b4fc1364b34ecad64c706d03d68d4c9b6200d37ff911a2",
+      "count": 228,
+      "sha256": "91e923a963784da31228cf5c7813f631e856e7d086b0618903ef6b8c7749413e",
       "warnings": []
     },
     "youtube": {
-      "count": 6,
-      "sha256": "a859a20da4ba4d2559febd31852d2c79b9aab4a276a9b4b4ac59976b048fd61d",
+      "count": 177,
+      "sha256": "810b3c63e0564604d2826c5c887068fc04c493b1ef7b37b74f85d05895a0fac2",
       "warnings": []
     },
     "primevideo": {
-      "count": 14,
-      "sha256": "a863aa08f7096fb6a1331132ec0e4407d270b000246f1b18e14cc6f13e83d71e",
+      "count": 24,
+      "sha256": "6b6f382df606b954f32257797906829f6a7e180c29e844f7d853d7d23a8ebda1",
       "warnings": []
     },
     "max": {
-      "count": 4,
-      "sha256": "210124a75530dd3197d2668b1d70432edaccdfd930500b56635a94cdcafc8297",
+      "count": 64,
+      "sha256": "bce955a5a1ec6639855dcf7f22ea5ec0891987b68aaa43ea009f7d177c431c12",
       "warnings": []
     },
     "hulu": {
-      "count": 4,
-      "sha256": "d10f98739237b1d2a3dd1db48c693583647b644284e3b3dbb604dcfa8153cdce",
+      "count": 48,
+      "sha256": "492f6b155dbd242e39c6fdfc271d4f21b6b1528365d9dd34a7d2e6d8532e06ca",
       "warnings": []
     },
     "appletv": {
@@ -37,23 +37,23 @@
       "warnings": []
     },
     "spotify": {
-      "count": 14,
-      "sha256": "976d15fd88f466712b27defa29e487cc1cefe6727dfabbb50f326901651fba42",
+      "count": 28,
+      "sha256": "176d383aed8eafef1b4ee3c22edae04c125680d8ba39e3d94d01cd4ad2d1a910",
       "warnings": []
     },
     "tiktok": {
-      "count": 10,
-      "sha256": "433e29946b184cc79300fe84917cb98af367b59c54c034b5fd54375db105ce62",
+      "count": 38,
+      "sha256": "99eccc09971bd5292bf2f0c6abcf12caf03db8e79414a8803884d3b00f7a7483",
       "warnings": []
     },
     "dazn": {
-      "count": 3,
-      "sha256": "c9416dab8dd1bd4e0c314fc168f4a2d61697daaf22f035255512fb30ec98f3c7",
+      "count": 8,
+      "sha256": "a16f00d0fc3bcef60b12694b8a1b089211512f79e90e127ed8f04fabc2649347",
       "warnings": []
     },
     "bbciplayer": {
-      "count": 19,
-      "sha256": "713197d32da3e15f1f3f5d5aad18484a57b0fa27cb84d3364a3362af94a501f2",
+      "count": 28,
+      "sha256": "21516e2a593f1b2ea9def01c7c8c22d58ca067f1c042a98453a757395bb305a3",
       "warnings": []
     },
     "paramount": {
@@ -78,23 +78,23 @@
       ]
     },
     "abema": {
-      "count": 8,
-      "sha256": "f48bea8fab902f5eb56a75f42db5d06a35be99b229f32bfcd10cf162c72196a9",
+      "count": 21,
+      "sha256": "0523490c5b1cb78659fa2f57949eb60f90de3a8602de585463f2bd59963e95cc",
       "warnings": []
     },
     "bahamut": {
-      "count": 4,
-      "sha256": "5c8158c9170416aecf7d0ca65fbc8463f2f5aade575e8789a5fdc65604b0c0a4",
+      "count": 5,
+      "sha256": "e4b255990b8833670713bd19979638d001297760a10acd3d7852cd0a3fa8d70c",
       "warnings": []
     },
     "bilibili": {
-      "count": 5,
-      "sha256": "fc171d4cbc4e2e123532722493fa7081c358c584dc63984b580c1bbc4eab8a25",
+      "count": 53,
+      "sha256": "1a18ad6194a1d02a129270c5e348322d9b0d677eb06f319d7e04b843808de67c",
       "warnings": []
     },
     "iqiyi": {
-      "count": 3,
-      "sha256": "e99d9fe7b1d20f16ed0ab0a40b545753663152b48122b44ed72a627549dea582",
+      "count": 20,
+      "sha256": "fbaaec80ec65ed1f45590d90f11c6a0a8738e515cd429e6a63606033210d2214",
       "warnings": []
     },
     "viu": {
@@ -103,23 +103,23 @@
       "warnings": []
     },
     "tvb": {
-      "count": 3,
-      "sha256": "b21734041075717fa8a98d4f3a43cc5e4ab4c6806029d48e713dacd1f64bd887",
+      "count": 14,
+      "sha256": "7dacaa5cdf750d691204925ae8b2b2a38c1f49f502dc85103c11c16d82100752",
       "warnings": []
     },
     "openai": {
-      "count": 13,
-      "sha256": "d09108aa85084043fa4f42268f88b12b5c542e2ad96d6fbe04b8b19f2b38dd0c",
+      "count": 22,
+      "sha256": "1b8abd86f3f4207e1985d11b622c27f67c17c202d710980ad53b88d653b98c02",
       "warnings": []
     },
     "claude": {
-      "count": 4,
-      "sha256": "a906872034bcddf6a827ae2a78693bf140d7f5b322b5c689afb7800ac4a0a982",
+      "count": 8,
+      "sha256": "d6230e0c96355200930c561fa07ccdda400659d5d82e3c484c2bf2d4e1358416",
       "warnings": []
     },
     "gemini": {
-      "count": 14,
-      "sha256": "5eab5a8ef41b39086aa141dcdca4427c5feaa3091b560ade7afde198b19bfc6f",
+      "count": 43,
+      "sha256": "c759bda4137a8886300fdfd852b7e0927f73221bd0c3077de2172bbdf4591a45",
       "warnings": []
     },
     "githubcopilot": {
@@ -133,13 +133,13 @@
       "warnings": []
     },
     "perplexity": {
-      "count": 4,
-      "sha256": "6d8ae5439c063d21dd69e50dc3f3d1cde1491d1623c877dfba810b8991a1bc05",
+      "count": 5,
+      "sha256": "9b0138682b39852816b727be2b8d5da558a1f1142336e1a03dbd025ed0addf62",
       "warnings": []
     },
     "grok": {
-      "count": 3,
-      "sha256": "1d2ec74d12581b146be42fca92ef0b1bddb72d6ec9c0a3f72e8d89427fe20200",
+      "count": 5,
+      "sha256": "0302b4066f2c4553d9584f083ce0c4399bea443b2dd58e04cc49f7085ee755c0",
       "warnings": []
     },
     "poe": {
@@ -162,23 +162,23 @@
       ]
     },
     "deepseek": {
-      "count": 2,
-      "sha256": "56af9b35e13977e44500e9195097e8b58d67b0de2437520d6673fd5170eb0552",
+      "count": 3,
+      "sha256": "7966867e46b6a17029f630170a970836d642f495edd1c040571f4843a748a8e3",
       "warnings": []
     },
     "cursor": {
-      "count": 3,
-      "sha256": "3411352f6a0a1e43b1a40d2a60411165ac84bec9b4cc40298f503d1f849784b6",
+      "count": 4,
+      "sha256": "963a78363ff86e87ae10859baa5f2dc7e3184efce13ac6e158bb2e698228bf5d",
       "warnings": []
     },
     "canva": {
-      "count": 2,
-      "sha256": "e35acbc3afe7db7fc521614c4f7d0dbcfcb3d699359ec0816ad80caf3bf5b4c0",
+      "count": 7,
+      "sha256": "2b63f64c47e9aed6c5e138ef6bee9365a3a589de95940bea55c8355225cf9406",
       "warnings": []
     },
     "notion": {
-      "count": 3,
-      "sha256": "57d2e8060c663a6dc6f30bd650452aeea58997911c899c8dafc99cb7ab6fcd6c",
+      "count": 7,
+      "sha256": "068376eeeea9527bd2caa4d2e5dd65c944d8706f453c353ff9bdd315fb760527",
       "warnings": []
     },
     "characterai": {
@@ -201,8 +201,8 @@
       ]
     },
     "huggingface": {
-      "count": 2,
-      "sha256": "aff39fa05ee6ce980ba6f3abe42195ce3fe0be716cd2b38ea9e00965bcf8bb2d",
+      "count": 3,
+      "sha256": "67f5861b31232701f884efd38d9436dd89183fccbd01d6f10d791b9ef6fbf4b8",
       "warnings": []
     },
     "openrouter": {

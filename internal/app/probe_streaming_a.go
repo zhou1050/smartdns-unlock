@@ -59,9 +59,8 @@ func disneyProbeDecision(tokenCode int, tokenBody string, graphCode int, graphBo
 	if tokenCode == 403 || tokenCode == 429 || graphCode == 403 || graphCode == 429 {
 		return "unknown", region
 	}
-	if tokenCode >= 200 && tokenCode < 300 && graphCode >= 200 && graphCode < 300 && region != "" {
-		return "pass", region
-	}
+	// HTTP success and a country string are not enough: only the explicit
+	// inSupportedLocation flag proves service availability.
 	return "unknown", region
 }
 
@@ -160,6 +159,9 @@ func probePrimeVideo(ctx context.Context) ProbeResult {
 	if apiCode == 403 || apiCode == 429 || apiCode >= 500 {
 		return res("unknown", region, fmt.Sprintf("Prime Video playback HTTP %d", apiCode))
 	}
+	if apiCode < 200 || apiCode >= 300 {
+		return res("unknown", region, fmt.Sprintf("Prime Video playback HTTP %d without capability proof", apiCode))
+	}
 	return res("pass", region, "Prime Video territory and playback endpoint available")
 }
 
@@ -251,8 +253,15 @@ func probeTikTok(ctx context.Context) ProbeResult {
 	if err != nil {
 		return res("unknown", "", err.Error())
 	}
-	_, _, _, regionBody, regionErr := probeRequest(ctx, http.MethodPost, "https://www.tiktok.com/passport/web/store_region/", nil, "")
-	if regionErr == nil {
+	regionCode, _, _, regionBody, regionErr := probeRequest(ctx, http.MethodPost, "https://www.tiktok.com/passport/web/store_region/", nil, "")
+	low := strings.ToLower(final + " " + body + " " + regionBody)
+	if explicitGeoBlock(low) || strings.Contains(low, "unavailable") {
+		return res("fail", "", "TikTok explicit unavailable region")
+	}
+	if code == 403 || code == 429 || regionCode == 403 || regionCode == 429 {
+		return res("unknown", "", fmt.Sprintf("TikTok challenge site=%d region=%d", code, regionCode))
+	}
+	if regionErr == nil && code >= 200 && code < 400 && regionCode >= 200 && regionCode < 300 {
 		region := findJSONString(regionBody, "store_region")
 		if region == "" {
 			region = findJSONString(regionBody, "region")
@@ -261,13 +270,6 @@ func probeTikTok(ctx context.Context) ProbeResult {
 		if region != "" {
 			return res("pass", region, "TikTok store region returned")
 		}
-	}
-	low := strings.ToLower(final + " " + body + " " + regionBody)
-	if explicitGeoBlock(low) || strings.Contains(low, "unavailable") {
-		return res("fail", "", "TikTok explicit unavailable region")
-	}
-	if code == 403 || code == 429 {
-		return res("unknown", "", fmt.Sprintf("TikTok HTTP %d challenge without geo decision", code))
 	}
 	return res("unknown", "", "TikTok store region unavailable")
 }

@@ -84,7 +84,7 @@ func ProbePlatform(ctx context.Context, p Platform) ProbeResult {
 	case "tvb":
 		return probeTVB(ctx)
 	case "openai":
-		return probeOpenAI(ctx)
+		return probeOpenAIStrict(ctx)
 	case "claude":
 		return probeClaude(ctx)
 	case "copilot":
@@ -128,27 +128,41 @@ func netflixProbeDecision(code int, final, body string) string {
 }
 
 func probeNetflix(ctx context.Context) ProbeResult {
-	blocked := 0
-	unknown := 0
-	for _, u := range []string{"https://www.netflix.com/title/81280792", "https://www.netflix.com/title/70143836"} {
-		code, final, body, err := httpGet(ctx, u, map[string]string{"Accept-Language": "en"})
+	check := func(title string) string {
+		code, final, body, err := httpGet(ctx, "https://www.netflix.com/title/"+title, map[string]string{"Accept-Language": "en"})
 		if err != nil {
-			unknown++
-			continue
+			return "unknown"
 		}
-		switch netflixProbeDecision(code, final, body) {
-		case "pass":
-			return res("pass", "", "Netflix title reachable")
-		case "fail":
-			blocked++
-		default:
-			unknown++
+		return netflixProbeDecision(code, final, body)
+	}
+
+	// 81280792 is the licensed/non-Original title used to decide full catalog
+	// access.  70143836 is only a fallback discriminator: reaching it after the
+	// licensed title is blocked means Originals-only access, not a full pass.
+	licensed := check("81280792")
+	if licensed == "pass" {
+		return res("pass", "", "Netflix licensed title reachable (full catalog)")
+	}
+	original := check("70143836")
+	status, detail := netflixFullAccessDecision(licensed, original)
+	return res(status, "", detail)
+}
+
+func netflixFullAccessDecision(licensed, original string) (string, string) {
+	switch licensed {
+	case "pass":
+		return "pass", "Netflix licensed title reachable (full catalog)"
+	case "fail":
+		if original == "pass" {
+			return "fail", "Netflix Originals only; licensed title blocked"
 		}
+		return "fail", "Netflix licensed title explicitly region blocked"
+	default:
+		if original == "pass" {
+			return "unknown", "Netflix Originals reachable; licensed title inconclusive"
+		}
+		return "unknown", "Netflix licensed title inconclusive"
 	}
-	if blocked >= 2 {
-		return res("fail", "", "Netflix multiple titles explicitly region blocked")
-	}
-	return res("unknown", "", fmt.Sprintf("Netflix inconclusive blocked=%d unknown=%d", blocked, unknown))
 }
 
 func probeYouTube(ctx context.Context) ProbeResult {
@@ -292,11 +306,11 @@ func openAIProbeDecision(apiCode int, apiBody string, iosCode int, iosBody strin
 	}
 	apiPositive := apiCode > 0 && apiCode < 500 && strings.TrimSpace(apiBody) != "" && !apiBlocked
 	iosPositive := (iosCode >= 200 && iosCode < 400 || iosCode == 404) && strings.TrimSpace(iosBody) != "" && !iosBlocked
-	if apiPositive || iosPositive {
-		return "pass"
-	}
 	if apiBlocked || iosBlocked {
 		return "unknown"
+	}
+	if apiPositive && iosPositive {
+		return "pass"
 	}
 	return "unknown"
 }
@@ -356,11 +370,10 @@ func claudeProbeDecision(code int, final, body, region string) string {
 	if claudeExplicitBlock(final + " " + body) {
 		return "fail"
 	}
-	if code >= 200 && code < 400 && strings.Contains(strings.ToLower(final), "claude.ai") {
-		return "pass"
-	}
-	if (code == 403 || code == 429) && region != "" && strings.Contains(strings.ToLower(final), "claude.ai") {
-		return "pass"
+	// A public landing page (or a Cloudflare challenge) does not prove that
+	// sign-in and conversations are available from this region.
+	if code >= 200 && code < 400 && region != "" && strings.Contains(strings.ToLower(final), "claude.ai") {
+		return "unknown"
 	}
 	return "unknown"
 }
@@ -375,13 +388,8 @@ func probeClaude(ctx context.Context) ProbeResult {
 	switch claudeProbeDecision(code, final, body, region) {
 	case "fail":
 		return res("fail", region, "Claude explicit region block")
-	case "pass":
-		if code == 403 || code == 429 {
-			return res("pass", region, fmt.Sprintf("Claude route reachable; HTTP %d treated as anti-bot/rate-limit", code))
-		}
-		return res("pass", region, "Claude site reachable without region block")
 	default:
-		return res("unknown", region, fmt.Sprintf("Claude HTTP %d without explicit geo decision", code))
+		return res("unknown", region, fmt.Sprintf("Claude page reachable/HTTP %d without capability proof", code))
 	}
 }
 
@@ -395,7 +403,7 @@ func probeCopilot(ctx context.Context) ProbeResult {
 		return res("fail", "", "Copilot region denied")
 	}
 	if code/100 == 2 {
-		return res("pass", "", "Copilot reachable")
+		return res("unknown", "", "Copilot public page reachable without capability proof")
 	}
 	return res("unknown", "", fmt.Sprintf("HTTP %d", code))
 }

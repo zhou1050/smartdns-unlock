@@ -9,6 +9,22 @@ type Platform struct {
 	Probe    string `json:"probe,omitempty"`
 }
 
+// nativeProbeCanSelect is deliberately stricter than a probe's display
+// result. Some services expose a public home page worldwide, so a 2xx response
+// can be useful diagnostics without proving that login/catalog/playback works.
+// Such weak probes must never automatically put users on the native route.
+func nativeProbeCanSelect(p Platform, r ProbeResult) bool {
+	if r.Status != "pass" {
+		return false
+	}
+	switch p.Probe {
+	case "paramount", "peacock", "crunchyroll", "claude", "copilot":
+		return false
+	default:
+		return p.Probe != ""
+	}
+}
+
 var Platforms = []Platform{
 	{"netflix", "Netflix", "streaming", "netflix"}, {"disney", "Disney+", "streaming", "disney"}, {"youtube", "YouTube", "streaming", "youtube"},
 	{"primevideo", "Prime Video", "streaming", "primevideo"}, {"max", "Max / HBO Max", "streaming", "max"}, {"hulu", "Hulu", "streaming", "hulu"},

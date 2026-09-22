@@ -1,3 +1,5 @@
 api.x.ai
 grok.com
+grok.x.com
+grokipedia.com
 x.ai

@@ -140,7 +140,7 @@ func (m *Manager) NativeScan(ctx context.Context) error {
 		m.State.RouteModes[p.ID] = "auto"
 		r := checks[p.ID]
 		if !m.Cfg.NativeAutoDetect { m.State.Routes[p.ID] = "primary"; continue }
-		if p.Probe != "" && r.Status == "pass" { m.State.Routes[p.ID] = "native" } else { m.State.Routes[p.ID] = "primary" }
+		if nativeProbeCanSelect(p, r) { m.State.Routes[p.ID] = "native" } else { m.State.Routes[p.ID] = "primary" }
 	}
 	m.State.LastChecks = checks; m.State.Initialized = true; m.State.LastPlatformScan = time.Now()
 	return SaveState(m.Cfg.StatePath, m.State)
@@ -192,7 +192,7 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 	m.Mu.Lock()
 	for _, p := range Platforms {
 		if m.State.RouteMode(p.ID) != "auto" { continue }
-		if p.Probe != "" && checks[p.ID].Status == "fail" && m.State.Routes[p.ID] == "native" && m.Cfg.Primary != "" { nativeSuspects = append(nativeSuspects, p.ID) }
+		if p.Probe != "" && !nativeProbeCanSelect(p, checks[p.ID]) && m.State.Routes[p.ID] == "native" && m.Cfg.Primary != "" { nativeSuspects = append(nativeSuspects, p.ID) }
 	}
 	m.Mu.Unlock()
 	if len(nativeSuspects) > 0 {
@@ -201,7 +201,8 @@ func (m *Manager) PlatformCheck(ctx context.Context, repair bool) (map[string]Pr
 		for _, id := range nativeSuspects {
 			if r, ok := confirmed[id]; ok {
 				checks[id] = r
-				if r.Status == "fail" && m.State.Routes[id] == "native" { m.State.Routes[id] = "primary"; changed = true }
+					p, ok := PlatformByID(id)
+					if ok && !nativeProbeCanSelect(p, r) && m.State.Routes[id] == "native" { m.State.Routes[id] = "primary"; changed = true }
 			}
 		}
 		_ = SaveState(m.Cfg.StatePath, m.State); m.Mu.Unlock()

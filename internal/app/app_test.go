@@ -37,6 +37,16 @@ func TestPrimaryHealthFallback(t *testing.T) {
 	if !strings.Contains(string(b), "unlock_backup") { t.Fatalf("health fallback not rendered: %s", string(b)) }
 }
 
+func TestWeakHomepageProbeCannotSelectNative(t *testing.T) {
+	for _, id := range []string{"paramount", "peacock", "crunchyroll", "claude", "microsoftcopilot"} {
+		p, ok := PlatformByID(id)
+		if !ok { t.Fatalf("missing platform %s", id) }
+		if nativeProbeCanSelect(p, ProbeResult{Status: "pass"}) { t.Fatalf("weak probe %s selected native route", id) }
+	}
+	p, _ := PlatformByID("disney")
+	if !nativeProbeCanSelect(p, ProbeResult{Status: "pass"}) { t.Fatal("strong Disney location probe could not select native route") }
+}
+
 func TestApplyRouteChangeSkipsUnusedBackupHealthRestart(t *testing.T) {
 	d := t.TempDir()
 	cfg := DefaultConfig(); cfg.RuntimeDir = filepath.Join(d, "run"); cfg.SmartDNSConf = filepath.Join(d, "smartdns.conf")

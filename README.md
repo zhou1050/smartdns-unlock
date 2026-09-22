@@ -16,7 +16,7 @@ Debian / Ubuntu 上的 SmartDNS 流媒体 / AI 平台智能分流工具。服务
 - 多个 CLI 配置变更在短时间连续发生时自动合并重载，避免 SmartDNS 重启风暴和 DNS 短暂断流。
 - 内置安全卸载：恢复安装前系统 DNS；服务器原本已有 SmartDNS 时恢复原 SmartDNS，而不是删除它。
 
-> 当前 22 个探针对应 Netflix、Disney+、YouTube、Prime Video、Max、Hulu、Spotify、TikTok、DAZN、BBC iPlayer、Paramount+、Peacock、Crunchyroll、ABEMA、Bahamut、Bilibili、iQIYI、Viu、TVB、ChatGPT/OpenAI、Claude 和 Microsoft Copilot。部分站点没有稳定公开的无认证检测接口，因此程序采用“宁可 unknown、不误判 pass”的策略；`unknown` 不会自动切成原生直出。
+> 当前 22 个探针对应 Netflix、Disney+、YouTube、Prime Video、Max、Hulu、Spotify、TikTok、DAZN、BBC iPlayer、Paramount+、Peacock、Crunchyroll、ABEMA、Bahamut、Bilibili、iQIYI、Viu、TVB、ChatGPT/OpenAI、Claude 和 Microsoft Copilot。部分站点没有稳定公开的无认证检测接口，因此程序采用“宁可 unknown、不误判 pass”的策略。只有具有明确地区、授权或播放能力信号的强探针才能自动选择原生直出；公开首页可达、反爬页或端点结果不一致都不会作为原生解锁依据。Netflix 仅在受地区限制的授权片名可访问时才判定完整解锁，仅能访问 Originals 不再算通过。
 
 ## 一键安装
 

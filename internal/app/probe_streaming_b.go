@@ -17,9 +17,8 @@ func paramountProbeDecision(code int, final, body string) string {
 	if code == 403 || code == 429 || code >= 500 {
 		return "unknown"
 	}
-	if code >= 200 && code < 400 && strings.Contains(strings.ToLower(final), "paramountplus.com") {
-		return "pass"
-	}
+	// The public landing page is globally reachable and does not prove catalog
+	// or playback access.
 	return "unknown"
 }
 
@@ -53,9 +52,7 @@ func peacockProbeDecision(code int, final, body string) string {
 	if code == 403 || code == 429 || code >= 500 {
 		return "unknown"
 	}
-	if code >= 200 && code < 400 && strings.Contains(strings.ToLower(final), "peacocktv.com") {
-		return "pass"
-	}
+	// The public landing page is not a playback capability check.
 	return "unknown"
 }
 
@@ -82,9 +79,8 @@ func crunchyrollProbeDecision(countryCode string, siteCode int, final, body stri
 	if siteCode == 403 || siteCode == 429 || siteCode >= 500 {
 		return "unknown"
 	}
-	if countryCode != "" && siteCode >= 200 && siteCode < 400 && strings.Contains(strings.ToLower(final), "crunchyroll.com") {
-		return "pass"
-	}
+	// Evidon's country result plus a public home page cannot establish that the
+	// Crunchyroll catalog or streams are usable.
 	return "unknown"
 }
 

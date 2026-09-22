@@ -14,6 +14,19 @@ assert builder.normalize("*.Netflix.COM.") == "netflix.com"
 assert builder.normalize("bad domain") is None
 assert builder.normalize("example") is None
 
+original_fetch = builder.fetch
+builder.fetch = lambda _url: "\n".join([
+    "plain.example.com",
+    "domain:suffix.example.com",
+    "full:exact.example.com",
+    "regexp:^unsupported\\.example\\.com$",
+])
+try:
+    parsed = builder.parse_v2fly("test", set(), [])
+finally:
+    builder.fetch = original_fetch
+assert parsed == {"plain.example.com", "suffix.example.com", "exact.example.com"}
+
 registry = json.loads((ROOT / "config/platforms.json").read_text())
 ids = [entry["id"] for entry in registry["platforms"]]
 assert len(ids) == len(set(ids))

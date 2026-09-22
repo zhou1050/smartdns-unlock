@@ -60,6 +60,17 @@ def parse_v2fly(name: str, seen: set[str], warnings: list[str]) -> set[str]:
             domain = normalize(token.partition(":")[2])
             if domain:
                 result.add(domain)
+            continue
+        # domain-list-community primarily stores ordinary suffix rules as bare
+        # domains (for example, "nflxvideo.net").  Ignoring those lines leaves
+        # generated platform sets containing only our small seed list and can
+        # bypass the selected unlock resolver for API/search/playback hosts.
+        # Regex/keyword rules cannot be represented safely by a SmartDNS
+        # domain-set and remain intentionally unsupported.
+        if ":" not in token:
+            domain = normalize(token)
+            if domain:
+                result.add(domain)
     return result
 
 

@@ -2,11 +2,11 @@ package app
 
 import "testing"
 
-func TestOpenAIProbeDecisionAllowsWebAPIWhenIOSDisagrees(t *testing.T) {
+func TestOpenAIProbeDecisionDoesNotPassWhenIOSDisagrees(t *testing.T) {
 	apiBody := `{"cookie_requirements":{"required":false}}`
 	iosBody := `{"error":{"code":"unsupported_country_region_territory"}}`
-	if got := openAIProbeDecision(200, apiBody, 403, iosBody); got != "pass" {
-		t.Fatalf("expected pass when web/API is available but iOS disagrees, got %q", got)
+	if got := openAIProbeDecision(200, apiBody, 403, iosBody); got != "unknown" {
+		t.Fatalf("expected unknown when OpenAI endpoints disagree, got %q", got)
 	}
 }
 
@@ -25,8 +25,8 @@ func TestOpenAIProbeDecisionSingleBlockIsUnknown(t *testing.T) {
 }
 
 func TestClaudeChallengeIsNotGeoBlock(t *testing.T) {
-	if got := claudeProbeDecision(403, "https://claude.ai/", "Just a moment...", "US"); got != "pass" {
-		t.Fatalf("expected pass for Claude anti-bot challenge on reachable regional route, got %q", got)
+	if got := claudeProbeDecision(403, "https://claude.ai/", "Just a moment...", "US"); got != "unknown" {
+		t.Fatalf("expected unknown for Claude anti-bot challenge, got %q", got)
 	}
 }
 
