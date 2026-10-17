@@ -108,8 +108,8 @@
       "warnings": []
     },
     "openai": {
-      "count": 22,
-      "sha256": "1b8abd86f3f4207e1985d11b622c27f67c17c202d710980ad53b88d653b98c02",
+      "count": 23,
+      "sha256": "3620b007b114376d82805fb552201afb0da7c8e81cd78f72343b7e9e0fc60936",
       "warnings": []
     },
     "claude": {
@@ -167,8 +167,8 @@
       "warnings": []
     },
     "cursor": {
-      "count": 4,
-      "sha256": "963a78363ff86e87ae10859baa5f2dc7e3184efce13ac6e158bb2e698228bf5d",
+      "count": 5,
+      "sha256": "eb7315056ebfb599a7dccedddcb5aa7f7723665aa800e2783fff798c1fa3724e",
       "warnings": []
     },
     "canva": {
