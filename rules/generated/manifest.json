@@ -108,13 +108,13 @@
       "warnings": []
     },
     "openai": {
-      "count": 23,
-      "sha256": "3620b007b114376d82805fb552201afb0da7c8e81cd78f72343b7e9e0fc60936",
+      "count": 24,
+      "sha256": "f0967a4c4bc98e7356a1be13f79571c0ed7952de9535859c9678ff8b52cf17c5",
       "warnings": []
     },
     "claude": {
-      "count": 9,
-      "sha256": "6cbd62255096337d43e98a9429c3b8cdd3d8df0b9f1b56d85530ab3cee910f83",
+      "count": 19,
+      "sha256": "d38511b4f2ce29c9eadbc9fba4805cee80f622b321dde1d735944396539c2333",
       "warnings": []
     },
     "gemini": {
